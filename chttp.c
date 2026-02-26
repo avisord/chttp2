@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,24 +220,236 @@ int chttp_route(HttpServer *srv, const char *method,
     Route *r = &srv->routes[srv->route_count++];
     strncpy(r->method,  method,  sizeof(r->method)  - 1);
     strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
-    r->handler = h;
+    r->handler    = h;
+    r->ws_handler = NULL;
     return 0;
 }
 
-int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res) {
+int chttp_ws_route(HttpServer *srv, const char *pattern, WsHandler h) {
+    if (srv->route_count >= CHTTP_MAX_ROUTES) {
+        fprintf(stderr, "chttp: route table full, cannot add WS %s\n", pattern);
+        return -1;
+    }
+    Route *r = &srv->routes[srv->route_count++];
+    strncpy(r->method,  "GET",   sizeof(r->method)  - 1);
+    strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
+    r->handler    = NULL;
+    r->ws_handler = h;
+    return 0;
+}
+
+/* ---- WebSocket: SHA-1 (RFC 3174) ---- */
+
+#define SHA1_ROL(x,n) (((x)<<(n))|((uint32_t)(x)>>(32-(n))))
+
+static void sha1(const unsigned char *data, size_t len, unsigned char out[20]) {
+    uint32_t h0=0x67452301u, h1=0xEFCDAB89u, h2=0x98BADCFEu,
+             h3=0x10325476u, h4=0xC3D2E1F0u;
+    uint64_t bit_len  = (uint64_t)len * 8;
+    size_t   pad_len  = ((len + 8) / 64 + 1) * 64;
+
+    unsigned char *msg = calloc(pad_len, 1);
+    if (!msg) return;
+    memcpy(msg, data, len);
+    msg[len] = 0x80;
+    for (int i = 0; i < 8; i++)
+        msg[pad_len - 8 + i] = (unsigned char)(bit_len >> (56 - i * 8));
+
+    for (size_t bi = 0; bi < pad_len; bi += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; i++)
+            w[i] = ((uint32_t)msg[bi+i*4]   << 24) | ((uint32_t)msg[bi+i*4+1] << 16)
+                 | ((uint32_t)msg[bi+i*4+2] <<  8) |  (uint32_t)msg[bi+i*4+3];
+        for (int i = 16; i < 80; i++)
+            w[i] = SHA1_ROL(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+
+        uint32_t a=h0, b=h1, c=h2, d=h3, e=h4;
+        for (int i = 0; i < 80; i++) {
+            uint32_t f, k;
+            if      (i < 20) { f = (b & c) | (~b & d);          k = 0x5A827999u; }
+            else if (i < 40) { f = b ^ c ^ d;                    k = 0x6ED9EBA1u; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
+            else              { f = b ^ c ^ d;                    k = 0xCA62C1D6u; }
+            uint32_t t = SHA1_ROL(a, 5) + f + e + k + w[i];
+            e=d; d=c; c=SHA1_ROL(b,30); b=a; a=t;
+        }
+        h0+=a; h1+=b; h2+=c; h3+=d; h4+=e;
+    }
+    free(msg);
+
+    uint32_t hh[5] = {h0, h1, h2, h3, h4};
+    for (int i = 0; i < 5; i++) {
+        out[i*4]   = (hh[i] >> 24) & 0xFF;
+        out[i*4+1] = (hh[i] >> 16) & 0xFF;
+        out[i*4+2] = (hh[i] >>  8) & 0xFF;
+        out[i*4+3] =  hh[i]        & 0xFF;
+    }
+}
+
+/* ---- WebSocket: base64 encode ---- */
+
+static void base64_encode(const unsigned char *in, size_t len, char *out) {
+    static const char tbl[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t i = 0, j = 0;
+    for (; i + 2 < len; i += 3) {
+        out[j++] = tbl[in[i]   >> 2];
+        out[j++] = tbl[((in[i]   & 0x03) << 4) | (in[i+1] >> 4)];
+        out[j++] = tbl[((in[i+1] & 0x0F) << 2) | (in[i+2] >> 6)];
+        out[j++] = tbl[  in[i+2] & 0x3F];
+    }
+    if (i < len) {
+        out[j++] = tbl[in[i] >> 2];
+        if (i + 1 < len) {
+            out[j++] = tbl[((in[i] & 0x03) << 4) | (in[i+1] >> 4)];
+            out[j++] = tbl[ (in[i+1] & 0x0F) << 2];
+        } else {
+            out[j++] = tbl[(in[i] & 0x03) << 4];
+            out[j++] = '=';
+        }
+        out[j++] = '=';
+    }
+    out[j] = '\0';
+}
+
+/* ---- WebSocket: HTTP 101 handshake ---- */
+
+#define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+static int ws_handshake(int fd, HttpRequest *req) {
+    const char *key = chttp_header(req, "Sec-WebSocket-Key");
+    if (!key) return -1;
+
+    char combined[256];
+    snprintf(combined, sizeof(combined), "%s" WS_GUID, key);
+
+    unsigned char sha[20];
+    sha1((unsigned char *)combined, strlen(combined), sha);
+
+    char accept[32]; /* base64(20 bytes) = 28 chars + '\0' */
+    base64_encode(sha, 20, accept);
+
+    char resp[256];
+    int n = snprintf(resp, sizeof(resp),
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+    write(fd, resp, n);
+    return 0;
+}
+
+/* ---- WebSocket: frame I/O ---- */
+
+static int recv_exact(int fd, void *buf, size_t n) {
+    size_t got = 0;
+    while (got < n) {
+        int r = recv(fd, (char *)buf + got, n - got, 0);
+        if (r <= 0) return -1;
+        got += (size_t)r;
+    }
+    return 0;
+}
+
+/* Send an unmasked text frame (server → client). */
+int chttp_ws_send(int fd, const char *payload, size_t len) {
+    unsigned char hdr[10];
+    int hlen = 0;
+    hdr[hlen++] = 0x81; /* FIN + opcode text */
+    if (len < 126) {
+        hdr[hlen++] = (unsigned char)len;
+    } else if (len < 65536) {
+        hdr[hlen++] = 126;
+        hdr[hlen++] = (unsigned char)((len >> 8) & 0xFF);
+        hdr[hlen++] = (unsigned char)( len       & 0xFF);
+    } else {
+        hdr[hlen++] = 127;
+        for (int i = 7; i >= 0; i--)
+            hdr[hlen++] = (unsigned char)((len >> (i * 8)) & 0xFF);
+    }
+    if (write(fd, hdr, hlen) < 0) return -1;
+    if (write(fd, payload, len) < 0) return -1;
+    return 0;
+}
+
+/* Read one masked frame from client. Handles ping/close internally.
+ * Returns: number of payload bytes (≥1), 0 if ping was handled, -1 on close/error. */
+int chttp_ws_recv(int fd, char *buf, size_t bufsize) {
+    unsigned char hdr[2];
+    if (recv_exact(fd, hdr, 2) < 0) return -1;
+
+    int opcode = hdr[0] & 0x0F;
+    int masked  = (hdr[1] >> 7) & 1;
+    size_t plen = hdr[1] & 0x7F;
+
+    if (plen == 126) {
+        unsigned char ext[2];
+        if (recv_exact(fd, ext, 2) < 0) return -1;
+        plen = ((size_t)ext[0] << 8) | ext[1];
+    } else if (plen == 127) {
+        unsigned char ext[8];
+        if (recv_exact(fd, ext, 8) < 0) return -1;
+        plen = 0;
+        for (int i = 0; i < 8; i++) plen = (plen << 8) | ext[i];
+    }
+
+    unsigned char mask[4] = {0};
+    if (masked && recv_exact(fd, mask, 4) < 0) return -1;
+
+    if (opcode == 0x8) { /* Close — echo close frame */
+        unsigned char close_frame[2] = {0x88, 0x00};
+        write(fd, close_frame, 2);
+        return -1;
+    }
+
+    if (plen >= bufsize) return -1; /* frame too large */
+
+    if (plen > 0 && recv_exact(fd, buf, plen) < 0) return -1;
+    if (masked)
+        for (size_t i = 0; i < plen; i++) buf[i] ^= mask[i % 4];
+    buf[plen] = '\0';
+
+    if (opcode == 0x9) { /* Ping — send pong with same payload */
+        unsigned char pong_hdr[2] = {0x8A, (unsigned char)plen};
+        write(fd, pong_hdr, 2);
+        if (plen > 0) write(fd, buf, plen);
+        return 0;
+    }
+
+    return (int)plen;
+}
+
+int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd) {
     for (int i = 0; i < srv->route_count; i++) {
         Route *r = &srv->routes[i];
         if (strcmp(r->method, req->method) != 0) continue;
 
         HttpKV params[CHTTP_MAX_PATH_PARAMS];
         int count = 0;
-        if (chttp_match_route(r->pattern, req->path, params, &count)) {
-            req->path_param_count = count;
-            for (int j = 0; j < count; j++)
-                req->path_params[j] = params[j];
-            r->handler(req, res);
-            return 1;
+        if (!chttp_match_route(r->pattern, req->path, params, &count)) continue;
+
+        req->path_param_count = count;
+        for (int j = 0; j < count; j++)
+            req->path_params[j] = params[j];
+
+        if (r->ws_handler) {
+            const char *upgrade = chttp_header(req, "Upgrade");
+            if (!upgrade || strcasecmp(upgrade, "websocket") != 0) {
+                chttp_set_status(res, 426);
+                chttp_send_text(res, "WebSocket upgrade required");
+                return 1;
+            }
+            if (ws_handshake(fd, req) < 0) {
+                chttp_set_status(res, 400);
+                chttp_send_text(res, "WebSocket handshake failed");
+                return 1;
+            }
+            r->ws_handler(fd);
+            return -1; /* fd is now owned by ws handler — skip HTTP response */
         }
+
+        r->handler(req, res);
+        return 1;
     }
     return 0;
 }
@@ -349,7 +562,9 @@ static void *connection_thread(void *arg) {
         return NULL;
     }
 
-    if (!chttp_dispatch(srv, &req, &res)) {
+    int dispatched = chttp_dispatch(srv, &req, &res, fd);
+    if (dispatched == -1) return NULL; /* WebSocket: handler owns fd */
+    if (!dispatched) {
         res.status = 404;
         chttp_send_text(&res, "Not Found");
     }

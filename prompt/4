@@ -3,3 +3,40 @@ create a basic socket endpoint where client get and send events to the server
   - client can send events to the server: anything
   - server can send events to the client: currently just echo with timestamp
   - also echo each 10 seconds as a demo event
+
+
+---
+
+  Changes across 3 files:
+
+  chttp.h
+  - Added WsHandler typedef (void (*)(int fd))
+  - Added ws_handler field to Route struct
+  - Added chttp_ws_route(), chttp_ws_send(), chttp_ws_recv() declarations
+  - Updated chttp_dispatch() signature to include int fd
+  - Added CHTTP_WS() macro
+
+  chttp.c — WebSocket protocol implemented from scratch (no deps):
+  - SHA-1 (RFC 3174) — for the Sec-WebSocket-Accept handshake header
+  - Base64 encode — to encode the SHA-1 digest
+  - ws_handshake() — reads Sec-WebSocket-Key, computes accept token, sends 101 Switching
+  Protocols
+  - chttp_ws_send() — sends unmasked server→client text frames (handles 1/2/8-byte length
+  prefixes)
+  - chttp_ws_recv() — reads masked client→server frames; handles ping (auto-pong) and close
+  (echo close) internally
+  - Updated chttp_dispatch() to detect WS routes, run handshake, call WsHandler, return -1 so
+  the connection thread skips the HTTP response path and doesn't close fd
+
+  server.c — handle_socket(int fd)
+  - select() loop with a 10-second timeout drives both events:
+    - tick every 10 s → {"event":"tick","timestamp":"..."}
+    - echo on each client message → {"event":"echo","data":"...","timestamp":"..."}
+
+  Test with wscat or websocat:
+  # wscat (npm install -g wscat)
+  wscat -c ws://localhost:8000/socket
+
+  # websocat
+  websocat ws://localhost:8000/socket
+
