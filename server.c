@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 
 #include "chttp.h"
 
@@ -72,6 +74,149 @@ static void handle_echo(HttpRequest *req, HttpResponse *res) {
     chttp_send_text(res, msg);
 }
 
+/* POST /upload — multipart/form-data file upload */
+static void handle_upload(HttpRequest *req, HttpResponse *res) {
+    /* Validate Content-Type */
+    const char *ct = chttp_header(req, "Content-Type");
+    if (!ct || strncmp(ct, "multipart/form-data", 19) != 0) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Expected multipart/form-data");
+        return;
+    }
+
+    /* Extract boundary */
+    const char *bp = strstr(ct, "boundary=");
+    if (!bp) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Missing boundary");
+        return;
+    }
+    bp += 9; /* skip "boundary=" */
+
+    char boundary[128] = {0};
+    strncpy(boundary, bp, sizeof(boundary) - 1);
+    /* Strip optional quotes */
+    if (boundary[0] == '"') {
+        memmove(boundary, boundary + 1, strlen(boundary));
+        char *q = strchr(boundary, '"');
+        if (q) *q = '\0';
+    }
+    /* Trim trailing whitespace */
+    for (int i = (int)strlen(boundary) - 1;
+         i >= 0 && (boundary[i] == ' ' || boundary[i] == '\r' || boundary[i] == '\n');
+         i--)
+        boundary[i] = '\0';
+
+    if (!req->body || req->body_len == 0) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Empty body");
+        return;
+    }
+
+    /* Locate first boundary line */
+    char delim[130] = "--";
+    strncat(delim, boundary, sizeof(delim) - 3);
+
+    char *part = strstr(req->body, delim);
+    if (!part) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Boundary not found in body");
+        return;
+    }
+    /* Advance past boundary + CRLF */
+    part += strlen(delim);
+    if (part[0] == '\r' && part[1] == '\n') part += 2;
+
+    /* Find end of part headers (blank line) */
+    char *body_start = strstr(part, "\r\n\r\n");
+    if (!body_start) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Malformed multipart headers");
+        return;
+    }
+
+    /* Extract filename from Content-Disposition */
+    char filename[256] = {0};
+    char *cd = strstr(part, "Content-Disposition:");
+    if (!cd || cd > body_start)
+        cd = strstr(part, "content-disposition:");
+    if (cd && cd < body_start) {
+        char *fn = strstr(cd, "filename=\"");
+        if (fn && fn < body_start) {
+            fn += 10;
+            char *fn_end = strchr(fn, '"');
+            if (fn_end && fn_end < body_start) {
+                int len = (int)(fn_end - fn);
+                if (len >= (int)sizeof(filename)) len = (int)sizeof(filename) - 1;
+                strncpy(filename, fn, len);
+            }
+        }
+    }
+    if (filename[0] == '\0')
+        snprintf(filename, sizeof(filename), "upload_%ld", (long)time(NULL));
+
+    /* Extract part Content-Type */
+    char part_ct[128] = "application/octet-stream";
+    char *pct = strstr(part, "Content-Type:");
+    if (!pct) pct = strstr(part, "content-type:");
+    if (pct && pct < body_start) {
+        pct += 13;
+        while (*pct == ' ') pct++;
+        char *pct_end = strstr(pct, "\r\n");
+        if (pct_end && pct_end < body_start) {
+            int len = (int)(pct_end - pct);
+            if (len >= (int)sizeof(part_ct)) len = (int)sizeof(part_ct) - 1;
+            strncpy(part_ct, pct, len);
+            part_ct[len] = '\0';
+        }
+    }
+
+    /* File data starts after the blank line */
+    char *file_data = body_start + 4;
+
+    /* File data ends before \r\n--boundary */
+    char end_delim[134] = "\r\n--";
+    strncat(end_delim, boundary, sizeof(end_delim) - 5);
+
+    char *file_end = strstr(file_data, end_delim);
+    if (!file_end) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Could not locate end boundary");
+        return;
+    }
+    size_t file_size = (size_t)(file_end - file_data);
+
+    /* Sanitize filename: reject path traversal */
+    for (char *c = filename; *c; c++)
+        if (*c == '/' || *c == '\\') *c = '_';
+
+    /* Ensure uploads/ directory exists */
+    mkdir("uploads", 0755);
+
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "uploads/%s", filename);
+
+    FILE *f = fopen(filepath, "wb");
+    if (!f) {
+        chttp_set_status(res, 500);
+        chttp_send_text(res, "Failed to save file");
+        return;
+    }
+    fwrite(file_data, 1, file_size, f);
+    fclose(f);
+
+    /* Respond with file metadata */
+    cJSON *meta = cJSON_CreateObject();
+    cJSON_AddStringToObject(meta, "filename",     filename);
+    cJSON_AddStringToObject(meta, "path",         filepath);
+    cJSON_AddStringToObject(meta, "content_type", part_ct);
+    cJSON_AddNumberToObject(meta, "size_bytes",   (double)file_size);
+
+    chttp_set_status(res, 201);
+    chttp_send_cjson(res, meta);
+    cJSON_Delete(meta);
+}
+
 int main(void) {
     HttpServer srv;
 
@@ -83,6 +228,7 @@ int main(void) {
     CHTTP_GET(&srv,  "/users/:id", handle_get_user);
     CHTTP_POST(&srv, "/users",     handle_create_user);
     CHTTP_GET(&srv,  "/echo",      handle_echo);
+    CHTTP_POST(&srv, "/upload",    handle_upload);
 
     chttp_server_run(&srv);
 
