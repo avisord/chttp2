@@ -1,0 +1,9 @@
+now create a download endpoint in which the filename will be passed in url path segment:
+  - url: /fdownload/:filename
+  - if filename exists in uplod dir, response with the file
+  - if filename does not exist, response with 404
+
+another similar endpoint is to get metadata of a file:
+  - url: /fmetadata/:filename
+  - if filename exists in uplod dir, response with metadata
+  - if filename does not exist, response with 404

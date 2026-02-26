@@ -74,6 +74,104 @@ static void handle_echo(HttpRequest *req, HttpResponse *res) {
     chttp_send_text(res, msg);
 }
 
+/* Detect MIME type from file extension */
+static const char *mime_from_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if (!dot) return "application/octet-stream";
+    if (strcmp(dot, ".txt")  == 0) return "text/plain";
+    if (strcmp(dot, ".html") == 0) return "text/html";
+    if (strcmp(dot, ".json") == 0) return "application/json";
+    if (strcmp(dot, ".png")  == 0) return "image/png";
+    if (strcmp(dot, ".jpg")  == 0 ||
+        strcmp(dot, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(dot, ".gif")  == 0) return "image/gif";
+    if (strcmp(dot, ".pdf")  == 0) return "application/pdf";
+    if (strcmp(dot, ".csv")  == 0) return "text/csv";
+    return "application/octet-stream";
+}
+
+/* Validate filename: no path traversal, no slashes */
+static int safe_filename(const char *name) {
+    return name && *name
+        && !strchr(name, '/')
+        && !strchr(name, '\\')
+        && !strstr(name, "..");
+}
+
+/* GET /fdownload/:filename */
+static void handle_download(HttpRequest *req, HttpResponse *res) {
+    const char *filename = chttp_path_param(req, "filename");
+    if (!safe_filename(filename)) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Invalid filename");
+        return;
+    }
+
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "uploads/%s", filename);
+
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
+        chttp_set_status(res, 404);
+        chttp_send_text(res, "File not found");
+        return;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (fsize < 0 || fsize >= (long)CHTTP_RESP_BUFSIZE) {
+        fclose(f);
+        chttp_set_status(res, 500);
+        chttp_send_text(res, "File too large to serve");
+        return;
+    }
+
+    res->body_len = fread(res->body, 1, (size_t)fsize, f);
+    fclose(f);
+
+    chttp_set_header(res, "Content-Type", mime_from_ext(filename));
+
+    char cd[320];
+    snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", filename);
+    chttp_set_header(res, "Content-Disposition", cd);
+}
+
+/* GET /fmetadata/:filename */
+static void handle_fmetadata(HttpRequest *req, HttpResponse *res) {
+    const char *filename = chttp_path_param(req, "filename");
+    if (!safe_filename(filename)) {
+        chttp_set_status(res, 400);
+        chttp_send_text(res, "Invalid filename");
+        return;
+    }
+
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "uploads/%s", filename);
+
+    struct stat st;
+    if (stat(filepath, &st) != 0) {
+        chttp_set_status(res, 404);
+        chttp_send_text(res, "File not found");
+        return;
+    }
+
+    char mtime_str[32];
+    struct tm *tm_info = gmtime(&st.st_mtime);
+    strftime(mtime_str, sizeof(mtime_str), "%Y-%m-%dT%H:%M:%SZ", tm_info);
+
+    cJSON *meta = cJSON_CreateObject();
+    cJSON_AddStringToObject(meta, "filename",     filename);
+    cJSON_AddStringToObject(meta, "path",         filepath);
+    cJSON_AddStringToObject(meta, "content_type", mime_from_ext(filename));
+    cJSON_AddNumberToObject(meta, "size_bytes",   (double)st.st_size);
+    cJSON_AddStringToObject(meta, "modified_at",  mtime_str);
+
+    chttp_send_cjson(res, meta);
+    cJSON_Delete(meta);
+}
+
 /* POST /upload — multipart/form-data file upload */
 static void handle_upload(HttpRequest *req, HttpResponse *res) {
     /* Validate Content-Type */
@@ -228,7 +326,9 @@ int main(void) {
     CHTTP_GET(&srv,  "/users/:id", handle_get_user);
     CHTTP_POST(&srv, "/users",     handle_create_user);
     CHTTP_GET(&srv,  "/echo",      handle_echo);
-    CHTTP_POST(&srv, "/upload",    handle_upload);
+    CHTTP_POST(&srv, "/upload",              handle_upload);
+    CHTTP_GET(&srv,  "/fdownload/:filename", handle_download);
+    CHTTP_GET(&srv,  "/fmetadata/:filename", handle_fmetadata);
 
     chttp_server_run(&srv);
 

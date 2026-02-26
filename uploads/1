@@ -1,0 +1,15 @@
+write a http server in c
+
+dependencies:
+- for networking use: arpa/inet.h
+- for rest we can use standard libraries
+- install json parser for parsing json
+
+features:
+
+- request parsing
+- request routing and handling based on path
+- extract query, body, headers
+- response building
+- response sending
+- error handling

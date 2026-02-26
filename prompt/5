@@ -1,0 +1,4 @@
+create a basic sse endpoint where client get server events
+  - url: /sse
+  - server can send events to the client: currently just ping user every 10 seconds
+  - also echo each 10 seconds as a demo event

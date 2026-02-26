@@ -1,0 +1,5 @@
+create a basic socket endpoint where client get and send events to the server
+  - url: /socket
+  - client can send events to the server: anything
+  - server can send events to the client: currently just echo with timestamp
+  - also echo each 10 seconds as a demo event
