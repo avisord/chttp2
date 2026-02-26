@@ -220,8 +220,9 @@ int chttp_route(HttpServer *srv, const char *method,
     Route *r = &srv->routes[srv->route_count++];
     strncpy(r->method,  method,  sizeof(r->method)  - 1);
     strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
-    r->handler    = h;
-    r->ws_handler = NULL;
+    r->handler     = h;
+    r->ws_handler  = NULL;
+    r->sse_handler = NULL;
     return 0;
 }
 
@@ -233,8 +234,23 @@ int chttp_ws_route(HttpServer *srv, const char *pattern, WsHandler h) {
     Route *r = &srv->routes[srv->route_count++];
     strncpy(r->method,  "GET",   sizeof(r->method)  - 1);
     strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
-    r->handler    = NULL;
-    r->ws_handler = h;
+    r->handler     = NULL;
+    r->ws_handler  = h;
+    r->sse_handler = NULL;
+    return 0;
+}
+
+int chttp_sse_route(HttpServer *srv, const char *pattern, SseHandler h) {
+    if (srv->route_count >= CHTTP_MAX_ROUTES) {
+        fprintf(stderr, "chttp: route table full, cannot add SSE %s\n", pattern);
+        return -1;
+    }
+    Route *r = &srv->routes[srv->route_count++];
+    strncpy(r->method,  "GET",   sizeof(r->method)  - 1);
+    strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
+    r->handler     = NULL;
+    r->ws_handler  = NULL;
+    r->sse_handler = h;
     return 0;
 }
 
@@ -419,6 +435,31 @@ int chttp_ws_recv(int fd, char *buf, size_t bufsize) {
     return (int)plen;
 }
 
+/* ---- SSE helpers ---- */
+
+static int sse_start(int fd) {
+    static const char hdrs[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/event-stream\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: keep-alive\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n";
+    return write(fd, hdrs, sizeof(hdrs) - 1) < 0 ? -1 : 0;
+}
+
+/* Send one SSE event. event may be NULL for an anonymous data line.
+ * Returns 0 on success, -1 if the client has disconnected. */
+int chttp_sse_send(int fd, const char *event, const char *data) {
+    char buf[4096];
+    int n;
+    if (event)
+        n = snprintf(buf, sizeof(buf), "event: %s\ndata: %s\n\n", event, data);
+    else
+        n = snprintf(buf, sizeof(buf), "data: %s\n\n", data);
+    return write(fd, buf, n) < 0 ? -1 : 0;
+}
+
 int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd) {
     for (int i = 0; i < srv->route_count; i++) {
         Route *r = &srv->routes[i];
@@ -445,7 +486,13 @@ int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd)
                 return 1;
             }
             r->ws_handler(fd);
-            return -1; /* fd is now owned by ws handler — skip HTTP response */
+            return -1; /* fd owned by ws handler */
+        }
+
+        if (r->sse_handler) {
+            if (sse_start(fd) < 0) return -1;
+            r->sse_handler(fd);
+            return -1; /* fd owned by sse handler */
         }
 
         r->handler(req, res);

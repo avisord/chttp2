@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -162,6 +163,49 @@ static void handle_socket(int fd)
   }
 
   close(fd);
+}
+
+/* GET /sse — Server-Sent Events endpoint
+ *   Every 10 s the server pushes two named events:
+ *     event: ping   — keepalive with current timestamp
+ *     event: message — demo payload
+ *   select() on fd detects client disconnect between ticks.
+ */
+static void handle_sse(int fd) {
+    while (1) {
+        /* Wait up to 10 s; readable fd means client closed the connection. */
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
+
+        int sel = select(fd + 1, &rfds, NULL, NULL, &tv);
+        if (sel < 0) break;
+
+        if (sel > 0) {
+            /* SSE clients don't send data; readable means EOF / disconnect. */
+            char tmp[16];
+            if (recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT) <= 0) break;
+        }
+
+        /* Build timestamp */
+        char ts[32];
+        time_t t = time(NULL);
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
+
+        /* ping — keepalive */
+        char ping_data[64];
+        snprintf(ping_data, sizeof(ping_data), "{\"timestamp\":\"%s\"}", ts);
+        if (chttp_sse_send(fd, "ping", ping_data) < 0) break;
+
+        /* message — demo event */
+        char msg_data[128];
+        snprintf(msg_data, sizeof(msg_data),
+                 "{\"text\":\"hello from server\",\"timestamp\":\"%s\"}", ts);
+        if (chttp_sse_send(fd, "message", msg_data) < 0) break;
+    }
+
+    close(fd);
 }
 
 /* Detect MIME type from file extension */
@@ -455,6 +499,7 @@ int main(void)
   CHTTP_GET(&srv, "/echo", handle_echo);
   CHTTP_POST(&srv, "/upload", handle_upload);
   CHTTP_WS(&srv, "/socket", handle_socket);
+  CHTTP_SSE(&srv, "/sse", handle_sse);
   CHTTP_GET(&srv, "/fdownload/:filename", handle_download);
   CHTTP_GET(&srv, "/fmetadata/:filename", handle_fmetadata);
 

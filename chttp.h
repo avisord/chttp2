@@ -34,13 +34,15 @@ typedef struct {
 } HttpResponse;
 
 typedef void (*RouteHandler)(HttpRequest *req, HttpResponse *res);
-typedef void (*WsHandler)(int fd); /* called after WS handshake with live fd */
+typedef void (*WsHandler)(int fd);  /* called after WS handshake with live fd */
+typedef void (*SseHandler)(int fd); /* called after SSE headers flushed */
 
 typedef struct {
     char method[8];
     char pattern[256];
-    RouteHandler handler;    /* NULL for WS routes */
-    WsHandler    ws_handler; /* NULL for HTTP routes */
+    RouteHandler handler;     /* NULL for WS/SSE routes */
+    WsHandler    ws_handler;  /* NULL for HTTP/SSE routes */
+    SseHandler   sse_handler; /* NULL for HTTP/WS routes */
 } Route;
 
 typedef struct {
@@ -57,6 +59,7 @@ void chttp_server_destroy(HttpServer *srv);
 /* Routing */
 int  chttp_route(HttpServer *srv, const char *method, const char *pattern, RouteHandler h);
 int  chttp_ws_route(HttpServer *srv, const char *pattern, WsHandler h);
+int  chttp_sse_route(HttpServer *srv, const char *pattern, SseHandler h);
 int  chttp_match_route(const char *pattern, const char *path, HttpKV *params, int *count);
 int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd);
 
@@ -65,11 +68,17 @@ int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd
 #define CHTTP_PUT(s,p,h)    chttp_route(s, "PUT",    p, h)
 #define CHTTP_DELETE(s,p,h) chttp_route(s, "DELETE", p, h)
 #define CHTTP_PATCH(s,p,h)  chttp_route(s, "PATCH",  p, h)
-#define CHTTP_WS(s,p,h)     chttp_ws_route(s, p, h)
+#define CHTTP_WS(s,p,h)     chttp_ws_route(s,  p, h)
+#define CHTTP_SSE(s,p,h)    chttp_sse_route(s, p, h)
 
 /* WebSocket I/O (usable in WsHandler callbacks) */
 int chttp_ws_send(int fd, const char *payload, size_t len);
 int chttp_ws_recv(int fd, char *buf, size_t bufsize); /* >0 bytes, 0 ping handled, -1 close/err */
+
+/* SSE I/O (usable in SseHandler callbacks)
+ * event: optional event name (NULL → anonymous "data:" line)
+ * Returns 0 on success, -1 if client disconnected. */
+int chttp_sse_send(int fd, const char *event, const char *data);
 
 /* Parsing */
 int         chttp_parse_request(HttpRequest *req, const char *raw, int raw_len);
