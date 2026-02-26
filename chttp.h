@@ -1,0 +1,81 @@
+#ifndef CHTTP_H
+#define CHTTP_H
+
+#include <stddef.h>
+#include "cJSON.h"
+
+#define CHTTP_MAX_HEADERS      32
+#define CHTTP_MAX_QUERY_PARAMS 16
+#define CHTTP_MAX_PATH_PARAMS  8
+#define CHTTP_MAX_ROUTES       64
+#define CHTTP_READ_BUFSIZE     8192
+#define CHTTP_RESP_BUFSIZE     65536
+
+typedef struct {
+    char key[128];
+    char value[512];
+} HttpKV;
+
+typedef struct {
+    char method[8];
+    char path[1024];
+    char version[16];
+    HttpKV headers[CHTTP_MAX_HEADERS];    int header_count;
+    HttpKV query[CHTTP_MAX_QUERY_PARAMS]; int query_count;
+    HttpKV path_params[CHTTP_MAX_PATH_PARAMS]; int path_param_count;
+    char *body; size_t body_len;
+    char raw_buf[CHTTP_READ_BUFSIZE]; /* owns all raw bytes */
+} HttpRequest;
+
+typedef struct {
+    int status;
+    HttpKV headers[CHTTP_MAX_HEADERS]; int header_count;
+    char body[CHTTP_RESP_BUFSIZE]; size_t body_len;
+} HttpResponse;
+
+typedef void (*RouteHandler)(HttpRequest *req, HttpResponse *res);
+
+typedef struct {
+    char method[8];
+    char pattern[256];
+    RouteHandler handler;
+} Route;
+
+typedef struct {
+    int port;
+    int server_fd;
+    Route routes[CHTTP_MAX_ROUTES]; int route_count;
+} HttpServer;
+
+/* Server lifecycle */
+int  chttp_server_init(HttpServer *srv, int port);
+void chttp_server_run(HttpServer *srv);
+void chttp_server_destroy(HttpServer *srv);
+
+/* Routing */
+int  chttp_route(HttpServer *srv, const char *method, const char *pattern, RouteHandler h);
+int  chttp_match_route(const char *pattern, const char *path, HttpKV *params, int *count);
+int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res);
+
+#define CHTTP_GET(s,p,h)    chttp_route(s, "GET",    p, h)
+#define CHTTP_POST(s,p,h)   chttp_route(s, "POST",   p, h)
+#define CHTTP_PUT(s,p,h)    chttp_route(s, "PUT",    p, h)
+#define CHTTP_DELETE(s,p,h) chttp_route(s, "DELETE", p, h)
+#define CHTTP_PATCH(s,p,h)  chttp_route(s, "PATCH",  p, h)
+
+/* Parsing */
+int         chttp_parse_request(HttpRequest *req, const char *raw, int raw_len);
+const char *chttp_query_param(HttpRequest *req, const char *key);
+const char *chttp_header(HttpRequest *req, const char *key);
+const char *chttp_path_param(HttpRequest *req, const char *name);
+void        chttp_url_decode(const char *src, char *dst, size_t dst_size);
+
+/* Response building */
+void chttp_set_status(HttpResponse *res, int code);
+void chttp_set_header(HttpResponse *res, const char *key, const char *val);
+void chttp_send_text(HttpResponse *res, const char *text);
+void chttp_send_json(HttpResponse *res, const char *json_str);
+void chttp_send_cjson(HttpResponse *res, cJSON *obj);
+int  chttp_write_response(int fd, HttpResponse *res);
+
+#endif /* CHTTP_H */

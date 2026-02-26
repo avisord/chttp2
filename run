@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# run: export PATH=$PATH:$(pwd) to add executables in path
+
+# check argument
+if [ $# -lt 1 ]; then
+  echo "Usage: ./run.sh <filename> [args...]"
+  exit 1
+fi
+
+FILE=$1
+SRC="$FILE.c"
+OUT_DIR="dist"
+OUT="$OUT_DIR/$FILE"
+
+mkdir -p $OUT_DIR;
+
+# check file exists
+if [ ! -f "$SRC" ]; then
+  echo "Error: $SRC not found"
+  exit 1
+fi
+
+
+# auto-detect library files
+EXTRA_SRCS=""
+EXTRA_FLAGS=""
+[ -f "chttp.c" ] && EXTRA_SRCS="$EXTRA_SRCS chttp.c" && EXTRA_FLAGS="$EXTRA_FLAGS -lpthread"
+[ -f "cJSON.c" ] && EXTRA_SRCS="$EXTRA_SRCS cJSON.c"
+
+# compile
+echo "compiling..."
+/usr/bin/time -f "compiled in %es" \
+gcc "$SRC" $EXTRA_SRCS -Wall -Wextra -o "$OUT" $EXTRA_FLAGS
+if [ $? -ne 0 ]; then
+  echo "Compilation failed"
+  exit 1
+fi
+
+# run
+echo "Running $OUT..."
+shift # remove first arg (filename)
+/usr/bin/time -f "ran in in %es" \
+./"$OUT" "$@"
