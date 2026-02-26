@@ -1,0 +1,14 @@
+const crypto = require('crypto');
+
+// request.headers.sec-websocket-key
+const client_random_key = 'lROTYXePVhIIjDPKO5Rj+Q==';
+
+// every websocket server on earth use same guid: (global unique identifier)
+const guid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const finalString = client_random_key + guid;
+
+// response.headers.sec-websocket-accept
+const accept = crypto.createHash('sha1').update(finalString).digest('base64')
+
+// this proves that server knows websocket protocol
+accept === 'S+4OxUdrvP6PviHRMBH/9Bj1N0Y=';
