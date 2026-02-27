@@ -3,5 +3,5 @@ FLAGS="--verbose"
 
 
 curl $FLAGS http://localhost:8080/login \
--H Content-Type: application/json \
--d '{"username":"b","password":"1234"}'
+-H "Content-Type: application/json" \
+-d "$(printf '{"username":"a","password":"%d"}' "$PASSWORD__")"

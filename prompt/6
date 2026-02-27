@@ -50,3 +50,5 @@ implementation:
   pam_start("chttp", ...).
 
 ---
+
+claude --resume db80fdec-7b41-4754-9ca8-114ba5c16c8e
