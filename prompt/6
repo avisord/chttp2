@@ -1,0 +1,52 @@
+now we need to add an authentication endpoint
+  - path: /login
+  - expects a json body with:
+    username: string
+    password: string
+
+  - to authenticate user we will use the linux "PAM" module:
+```c
+    #include <security/pam_appl.h>
+    #include <security/pam_misc.h> 
+```
+  - once authenticated, we will create a secure session id and store it into session file which will be in this format:
+    - filename: ./sessions/session_<id>
+    - permissions: 600 (only server can read/write)
+    - contents: 
+```txt
+id=<id>
+username=alice
+created_at=<timestamp>
+expires_at=<timestamp>
+```
+  - this session id will be attached to the http cookie using the Set-Cookie response header
+```txt
+  Set-Cookie: session=<id>; HttpOnly; Path=/; SameSite=Lax
+```
+  - in further requests we will read and parse cookie and check if the session id is valid and not expired based on the expires_at timestamp
+    - then, we will allow the request to proceed
+    - otherwise, we will return 401 Unauthorized
+
+as current server is multi threaded we need to keep this thread safe
+---
+
+implementation:
+
+  server.c — new additions before handle_root:
+  - Includes: <ctype.h>, <fcntl.h>, <pthread.h>, <security/pam_appl.h>, <security/pam_misc.h>, <stdint.h>
+  - Constants: SESSION_DIR, SESSION_ID_BYTES, SESSION_EXPIRY_SEC
+  - generate_session_id() — reads 32 bytes from /dev/urandom, hex-encodes to 64-char ID
+  - pam_conv_func() + authenticate_pam() — per-call PAM authentication, fully thread-safe
+  - create_session() — atomic O_CREAT|O_EXCL file creation with 600 perms
+  - parse_session_cookie() — extracts session=<id> from Cookie header
+  - validate_session() — hex-validates ID (prevents path traversal), checks expiry
+  - require_auth() — reusable middleware for protecting routes (returns -1 and sends 401 on failure)
+  - handle_login() — POST /login handler
+  - main() — mkdir(SESSION_DIR, 0700) at startup + CHTTP_POST(&srv, "/login", handle_login)
+
+  run — added grep -q "pam_appl.h" "$SRC" && EXTRA_FLAGS="$EXTRA_FLAGS -lpam" for auto-detection.
+
+  Note: PAM "login" service typically requires root. For dev/testing, create /etc/pam.d/chttp with a permissive config, then change pam_start("login", ...) to
+  pam_start("chttp", ...).
+
+---

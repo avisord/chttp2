@@ -27,6 +27,7 @@ EXTRA_SRCS=""
 EXTRA_FLAGS=""
 [ -f "chttp.c" ] && EXTRA_SRCS="$EXTRA_SRCS chttp.c" && EXTRA_FLAGS="$EXTRA_FLAGS -lpthread"
 [ -f "cJSON.c" ] && EXTRA_SRCS="$EXTRA_SRCS cJSON.c"
+grep -q "pam_appl.h" "$SRC" && EXTRA_FLAGS="$EXTRA_FLAGS -lpam"
 
 # compile
 echo "compiling..."

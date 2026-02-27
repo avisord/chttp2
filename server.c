@@ -1,3 +1,9 @@
+#include <ctype.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <security/pam_appl.h>
+#include <security/pam_misc.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +14,220 @@
 #include <unistd.h>
 
 #include "chttp.h"
+
+#define SESSION_DIR "./sessions"
+#define SESSION_ID_BYTES 32
+#define SESSION_EXPIRY_SEC (24 * 3600)
+
+static int generate_session_id(char out[65])
+{
+  uint8_t bytes[SESSION_ID_BYTES];
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd < 0)
+    return -1;
+  ssize_t n = read(fd, bytes, sizeof(bytes));
+  close(fd);
+  if (n != SESSION_ID_BYTES)
+    return -1;
+  for (int i = 0; i < SESSION_ID_BYTES; i++)
+    snprintf(out + i * 2, 3, "%02x", bytes[i]);
+  out[64] = '\0';
+  return 0;
+}
+
+struct pam_creds
+{
+  const char *password;
+};
+
+static int pam_conv_func(int num_msg, const struct pam_message **msg,
+                         struct pam_response **resp, void *appdata_ptr)
+{
+  struct pam_creds *c = appdata_ptr;
+  struct pam_response *r = calloc(num_msg, sizeof(*r));
+  if (!r)
+    return PAM_CONV_ERR;
+  for (int i = 0; i < num_msg; i++)
+  {
+    if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF ||
+        msg[i]->msg_style == PAM_PROMPT_ECHO_ON)
+    {
+      r[i].resp = strdup(c->password);
+    }
+  }
+  *resp = r;
+  return PAM_SUCCESS;
+}
+
+static int authenticate_pam(const char *username, const char *password)
+{
+  struct pam_creds creds = {.password = password};
+  struct pam_conv conv = {pam_conv_func, &creds};
+  pam_handle_t *pamh = NULL;
+  int ret = pam_start("login", username, &conv, &pamh);
+  if (ret != PAM_SUCCESS)
+    return -1;
+  ret = pam_authenticate(pamh, 0);
+  pam_end(pamh, ret);
+  return (ret == PAM_SUCCESS) ? 0 : -1;
+}
+
+static int create_session(const char *username, char session_id_out[65])
+{
+  char id[65];
+  if (generate_session_id(id) < 0)
+    return -1;
+
+  time_t now = time(NULL);
+  time_t expires = now + SESSION_EXPIRY_SEC;
+
+  char filepath[256];
+  snprintf(filepath, sizeof(filepath), "%s/session_%s", SESSION_DIR, id);
+
+  int fd = open(filepath, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0)
+    return -1;
+
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf),
+                     "id=%s\nusername=%s\ncreated_at=%ld\nexpires_at=%ld\n",
+                     id, username, (long)now, (long)expires);
+  write(fd, buf, len);
+  close(fd);
+
+  memcpy(session_id_out, id, 65);
+  return 0;
+}
+
+static int parse_session_cookie(const char *cookie_hdr, char out[65])
+{
+  if (!cookie_hdr)
+    return 0;
+  const char *p = strstr(cookie_hdr, "session=");
+  if (!p)
+    return 0;
+  p += 8;
+  size_t i = 0;
+  while (i < 64 && *p && *p != ';' && *p != ' ')
+    out[i++] = *p++;
+  out[i] = '\0';
+  return i > 0;
+}
+
+static int validate_session(const char *session_id,
+                            char *username_out, size_t out_size)
+{
+  for (int i = 0; session_id[i]; i++)
+  {
+    if (!isxdigit((unsigned char)session_id[i]))
+      return -1;
+  }
+  char filepath[256];
+  snprintf(filepath, sizeof(filepath), "%s/session_%s", SESSION_DIR, session_id);
+
+  int fd = open(filepath, O_RDONLY);
+  if (fd < 0)
+    return -1;
+
+  char content[512];
+  ssize_t n = read(fd, content, sizeof(content) - 1);
+  close(fd);
+  if (n <= 0)
+    return -1;
+  content[n] = '\0';
+
+  char username[128] = "";
+  time_t expires_at = 0;
+
+  char *line = content;
+  while (line && *line)
+  {
+    char *nl = strchr(line, '\n');
+    if (nl)
+      *nl = '\0';
+    if (strncmp(line, "username=", 9) == 0)
+      strncpy(username, line + 9, sizeof(username) - 1);
+    else if (strncmp(line, "expires_at=", 11) == 0)
+      expires_at = (time_t)atol(line + 11);
+    line = nl ? nl + 1 : NULL;
+  }
+
+  if (!username[0] || expires_at == 0)
+    return -1;
+  if (time(NULL) > expires_at)
+    return -1;
+
+  if (username_out)
+    strncpy(username_out, username, out_size - 1);
+  return 0;
+}
+
+static int require_auth(HttpRequest *req, HttpResponse *res) __attribute__((unused));
+static int require_auth(HttpRequest *req, HttpResponse *res)
+{
+  const char *cookie = chttp_header(req, "Cookie");
+  char session_id[65] = "";
+  if (!parse_session_cookie(cookie, session_id) ||
+      validate_session(session_id, NULL, 0) < 0)
+  {
+    chttp_set_status(res, 401);
+    chttp_send_json(res, "{\"error\":\"Unauthorized\"}");
+    return -1;
+  }
+  return 0;
+}
+
+static void handle_login(HttpRequest *req, HttpResponse *res)
+{
+  if (!req->body || req->body_len == 0)
+  {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Request body required\"}");
+    return;
+  }
+  cJSON *json = cJSON_ParseWithLength(req->body, req->body_len);
+  if (!json)
+  {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  cJSON *j_user = cJSON_GetObjectItem(json, "username");
+  cJSON *j_pass = cJSON_GetObjectItem(json, "password");
+  if (!cJSON_IsString(j_user) || !cJSON_IsString(j_pass))
+  {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"username and password required\"}");
+    return;
+  }
+
+  if (authenticate_pam(j_user->valuestring, j_pass->valuestring) < 0)
+  {
+    printf("authenticate_pam, j_user->valuestring=%s, j_pass->valuestring=%s\n", j_user->valuestring, j_pass->valuestring);
+    cJSON_Delete(json);
+    chttp_set_status(res, 401);
+    chttp_send_json(res, "{\"error\":\"Invalid credentials\"}");
+    return;
+  }
+
+  char session_id[65];
+  if (create_session(j_user->valuestring, session_id) < 0)
+  {
+    cJSON_Delete(json);
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Failed to create session\"}");
+    return;
+  }
+  cJSON_Delete(json);
+
+  char cookie_val[128];
+  snprintf(cookie_val, sizeof(cookie_val),
+           "session=%s; HttpOnly; Path=/; SameSite=Lax", session_id);
+  chttp_set_header(res, "Set-Cookie", cookie_val);
+
+  chttp_send_json(res, "{\"message\":\"Login successful\"}");
+}
 
 /* GET / */
 static void handle_root(HttpRequest *req, HttpResponse *res)
@@ -171,41 +391,48 @@ static void handle_socket(int fd)
  *     event: message — demo payload
  *   select() on fd detects client disconnect between ticks.
  */
-static void handle_sse(int fd) {
-    while (1) {
-        /* Wait up to 10 s; readable fd means client closed the connection. */
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
+static void handle_sse(int fd)
+{
+  while (1)
+  {
+    /* Wait up to 10 s; readable fd means client closed the connection. */
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+    struct timeval tv = {.tv_sec = 10, .tv_usec = 0};
 
-        int sel = select(fd + 1, &rfds, NULL, NULL, &tv);
-        if (sel < 0) break;
+    int sel = select(fd + 1, &rfds, NULL, NULL, &tv);
+    if (sel < 0)
+      break;
 
-        if (sel > 0) {
-            /* SSE clients don't send data; readable means EOF / disconnect. */
-            char tmp[16];
-            if (recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT) <= 0) break;
-        }
-
-        /* Build timestamp */
-        char ts[32];
-        time_t t = time(NULL);
-        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
-
-        /* ping — keepalive */
-        char ping_data[64];
-        snprintf(ping_data, sizeof(ping_data), "{\"timestamp\":\"%s\"}", ts);
-        if (chttp_sse_send(fd, "ping", ping_data) < 0) break;
-
-        /* message — demo event */
-        char msg_data[128];
-        snprintf(msg_data, sizeof(msg_data),
-                 "{\"text\":\"hello from server\",\"timestamp\":\"%s\"}", ts);
-        if (chttp_sse_send(fd, "message", msg_data) < 0) break;
+    if (sel > 0)
+    {
+      /* SSE clients don't send data; readable means EOF / disconnect. */
+      char tmp[16];
+      if (recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT) <= 0)
+        break;
     }
 
-    close(fd);
+    /* Build timestamp */
+    char ts[32];
+    time_t t = time(NULL);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
+
+    /* ping — keepalive */
+    char ping_data[64];
+    snprintf(ping_data, sizeof(ping_data), "{\"timestamp\":\"%s\"}", ts);
+    if (chttp_sse_send(fd, "ping", ping_data) < 0)
+      break;
+
+    /* message — demo event */
+    char msg_data[128];
+    snprintf(msg_data, sizeof(msg_data),
+             "{\"text\":\"hello from server\",\"timestamp\":\"%s\"}", ts);
+    if (chttp_sse_send(fd, "message", msg_data) < 0)
+      break;
+  }
+
+  close(fd);
 }
 
 /* Detect MIME type from file extension */
@@ -487,11 +714,14 @@ static void handle_upload(HttpRequest *req, HttpResponse *res)
 
 int main(void)
 {
+  mkdir(SESSION_DIR, 0700);
+
   HttpServer srv;
 
-  if (chttp_server_init(&srv, 8000) < 0)
+  if (chttp_server_init(&srv, 8080) < 0)
     return 1;
 
+  CHTTP_POST(&srv, "/login", handle_login);
   CHTTP_GET(&srv, "/", handle_root);
   CHTTP_GET(&srv, "/hello", handle_hello);
   CHTTP_GET(&srv, "/users/:id", handle_get_user);
