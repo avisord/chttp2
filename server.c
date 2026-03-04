@@ -1,8 +1,12 @@
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <pthread.h>
+#include <pwd.h>
 #include <security/pam_appl.h>
 #include <security/pam_misc.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +14,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -162,6 +167,200 @@ static int validate_session(const char *session_id,
   return 0;
 }
 
+/* Listening socket fd — closed in child processes to prevent inheritance. */
+static int g_server_fd = -1;
+
+/*
+ * fork_and_run — authenticate, fork, drop privileges, execute handler.
+ *
+ * Forks a child process that:
+ *   1. Closes the listening socket.
+ *   2. Drops supplementary groups, GID, and UID to those of `username`.
+ *   3. Changes the working directory to the user's home.
+ *   4. Calls `handler(req, &child_res)` and writes the response to the
+ *      client fd directly.
+ *   5. Exits via _exit(0).
+ *
+ * The parent waits up to FORK_HANDLER_TIMEOUT_SEC seconds.  If the child
+ * times out it is SIGKILL'd and the parent sends 504 to the client.
+ *
+ * On success  → res->status is set to 0 (sentinel: "response already sent").
+ * On pre-fork error → res is filled with the error and -1 is returned so the
+ *                     caller's normal response path writes it.
+ */
+#define FORK_HANDLER_TIMEOUT_SEC 30
+
+static int fork_and_run(HttpRequest *req, HttpResponse *res,
+                        RouteHandler handler, const char *username)
+{
+  /* Look up user info before forking (use reentrant variant). */
+  struct passwd pw_buf, *pw;
+  char pw_strbuf[1024];
+  if (getpwnam_r(username, &pw_buf, pw_strbuf, sizeof(pw_strbuf), &pw) != 0
+      || !pw)
+  {
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"System user account not found\"}");
+    return -1;
+  }
+
+  /*
+   * Use a pipe so the parent can detect child exit without SIGALRM/signals.
+   * The write-end is inherited by the child; when _exit() closes it, the
+   * parent's select() sees EOF on the read-end.
+   */
+  int pipefd[2];
+  if (pipe(pipefd) < 0)
+  {
+    chttp_set_status(res, 503);
+    chttp_send_json(res, "{\"error\":\"Service temporarily unavailable\"}");
+    return -1;
+  }
+
+  int client_fd = req->fd;
+
+  pid_t pid = fork();
+  if (pid < 0)
+  {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    chttp_set_status(res, 503);
+    chttp_send_json(res, "{\"error\":\"Service temporarily unavailable\"}");
+    return -1;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Child process                                                        */
+  /* ------------------------------------------------------------------ */
+  if (pid == 0)
+  {
+    close(pipefd[0]); /* child does not read from pipe */
+
+    /* Release the listening socket — child must not accept connections. */
+    if (g_server_fd >= 0)
+      close(g_server_fd);
+
+/* Convenience: send an error response from the child and exit. */
+#define CHILD_ERR(http_code, json_msg)                        \
+    do {                                                      \
+      HttpResponse _er;                                       \
+      memset(&_er, 0, sizeof(_er));                           \
+      _er.status = (http_code);                               \
+      chttp_send_json(&_er, (json_msg));                      \
+      chttp_write_response(client_fd, &_er);                  \
+      close(client_fd);                                       \
+      close(pipefd[1]);                                       \
+      _exit(1);                                               \
+    } while (0)
+
+    /* Drop supplementary groups first. */
+    if (initgroups(username, pw->pw_gid) < 0)
+      CHILD_ERR(500, "{\"error\":\"Failed to initialise supplementary groups\"}");
+
+    /* Set GID before UID — once root is surrendered GID cannot be changed. */
+    if (setgid(pw->pw_gid) < 0)
+      CHILD_ERR(500, "{\"error\":\"Failed to set process group\"}");
+
+    if (setuid(pw->pw_uid) < 0)
+      CHILD_ERR(500, "{\"error\":\"Failed to set process user\"}");
+
+    /* Verify privilege drop is irreversible. */
+    if (setuid(0) == 0)
+      CHILD_ERR(500, "{\"error\":\"Privilege drop verification failed\"}");
+
+    /* Change to user's home directory; fall back to /tmp on failure. */
+    if (chdir(pw->pw_dir) < 0)
+      chdir("/tmp");
+
+    /* Run the actual request handler. */
+    HttpResponse child_res;
+    memset(&child_res, 0, sizeof(child_res));
+    child_res.status = 200;
+    handler(req, &child_res);
+
+    /* Write response to client then tear down. */
+    chttp_write_response(client_fd, &child_res);
+    close(client_fd);
+    close(pipefd[1]); /* EOF on pipe — signals parent we are done */
+    _exit(0);
+
+#undef CHILD_ERR
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Parent process                                                       */
+  /* ------------------------------------------------------------------ */
+  close(pipefd[1]); /* parent does not write to pipe */
+
+  /* Wait for child to finish (pipe read-end gets EOF on child exit). */
+  fd_set rfds;
+  FD_ZERO(&rfds);
+  FD_SET(pipefd[0], &rfds);
+  struct timeval tv = {.tv_sec = FORK_HANDLER_TIMEOUT_SEC, .tv_usec = 0};
+
+  int sel;
+  do
+  {
+    sel = select(pipefd[0] + 1, &rfds, NULL, NULL, &tv);
+  } while (sel < 0 && errno == EINTR);
+
+  close(pipefd[0]);
+
+  int timed_out = (sel <= 0);
+  if (timed_out)
+  {
+    /* Child is hung — kill it unconditionally. */
+    kill(pid, SIGKILL);
+  }
+
+  /* Always reap to prevent zombies. */
+  int wstatus;
+  waitpid(pid, &wstatus, 0);
+
+  if (timed_out)
+  {
+    /* Child never wrote a response; write the gateway-timeout ourselves. */
+    HttpResponse err_res;
+    memset(&err_res, 0, sizeof(err_res));
+    err_res.status = 504;
+    chttp_send_json(&err_res, "{\"error\":\"Request handler timed out\"}");
+    chttp_write_response(client_fd, &err_res);
+  }
+
+  /*
+   * Set status to 0 — the sentinel that tells connection_thread the response
+   * has already been written to the socket and chttp_write_response must be
+   * skipped.
+   */
+  res->status = 0;
+  return 0;
+}
+
+/*
+ * DEFINE_AUTH_ROUTE(wrapper_name, inner_handler)
+ *
+ * Generates a RouteHandler `wrapper_name` that:
+ *   1. Validates the session cookie → extracts username.
+ *   2. On invalid session: responds 401 immediately (no fork).
+ *   3. On valid session: calls fork_and_run() to execute `inner_handler`
+ *      under the authenticated user's OS privileges.
+ */
+#define DEFINE_AUTH_ROUTE(wrapper_name, inner_handler)                        \
+static void wrapper_name(HttpRequest *req, HttpResponse *res)                 \
+{                                                                             \
+  const char *_cookie = chttp_header(req, "Cookie");                         \
+  char _sid[65]  = "";                                                        \
+  char _user[128] = "";                                                       \
+  if (!parse_session_cookie(_cookie, _sid) ||                                \
+      validate_session(_sid, _user, sizeof(_user)) < 0)                      \
+  {                                                                           \
+    chttp_set_status(res, 401);                                               \
+    chttp_send_json(res, "{\"error\":\"Unauthorized\"}");                     \
+    return;                                                                   \
+  }                                                                           \
+  fork_and_run(req, res, (inner_handler), _user);                            \
+}
+
 static int require_auth(HttpRequest *req, HttpResponse *res) __attribute__((unused));
 static int require_auth(HttpRequest *req, HttpResponse *res)
 {
@@ -202,9 +401,9 @@ static void handle_login(HttpRequest *req, HttpResponse *res)
     return;
   }
 
+  printf("authenticate_pam, j_user->valuestring=%s, j_pass->valuestring=%s\n", j_user->valuestring, j_pass->valuestring);
   if (authenticate_pam(j_user->valuestring, j_pass->valuestring) < 0)
   {
-    printf("authenticate_pam, j_user->valuestring=%s, j_pass->valuestring=%s\n", j_user->valuestring, j_pass->valuestring);
     cJSON_Delete(json);
     chttp_set_status(res, 401);
     chttp_send_json(res, "{\"error\":\"Invalid credentials\"}");
@@ -712,6 +911,46 @@ static void handle_upload(HttpRequest *req, HttpResponse *res)
   cJSON_Delete(meta);
 }
 
+/* ------------------------------------------------------------------ */
+/* Authenticated route: GET /whoami                                    */
+/*                                                                     */
+/* Runs inside a forked child process under the authenticated user's   */
+/* OS privileges.  Returns the effective UID/GID, username, home dir,  */
+/* and current working directory as seen from that process.            */
+/* ------------------------------------------------------------------ */
+static void handle_whoami_impl(HttpRequest *req, HttpResponse *res)
+{
+  (void)req;
+
+  uid_t uid = getuid();
+  gid_t gid = getgid();
+
+  struct passwd pw_buf, *pw;
+  char pw_strbuf[1024];
+  getpwuid_r(uid, &pw_buf, pw_strbuf, sizeof(pw_strbuf), &pw);
+
+  char cwd[512];
+  if (!getcwd(cwd, sizeof(cwd)))
+    strncpy(cwd, "(unknown)", sizeof(cwd));
+
+  cJSON *obj = cJSON_CreateObject();
+  cJSON_AddNumberToObject(obj, "uid",  (double)uid);
+  cJSON_AddNumberToObject(obj, "gid",  (double)gid);
+  if (pw)
+  {
+    cJSON_AddStringToObject(obj, "username", pw->pw_name);
+    cJSON_AddStringToObject(obj, "home",     pw->pw_dir);
+    cJSON_AddStringToObject(obj, "shell",    pw->pw_shell);
+  }
+  cJSON_AddStringToObject(obj, "cwd", cwd);
+
+  chttp_send_cjson(res, obj);
+  cJSON_Delete(obj);
+}
+
+/* Generates: void handle_whoami(HttpRequest*, HttpResponse*) */
+DEFINE_AUTH_ROUTE(handle_whoami, handle_whoami_impl)
+
 int main(void)
 {
   mkdir(SESSION_DIR, 0700);
@@ -721,17 +960,22 @@ int main(void)
   if (chttp_server_init(&srv, 8080) < 0)
     return 1;
 
-  CHTTP_POST(&srv, "/login", handle_login);
-  CHTTP_GET(&srv, "/", handle_root);
-  CHTTP_GET(&srv, "/hello", handle_hello);
-  CHTTP_GET(&srv, "/users/:id", handle_get_user);
-  CHTTP_POST(&srv, "/users", handle_create_user);
-  CHTTP_GET(&srv, "/echo", handle_echo);
-  CHTTP_POST(&srv, "/upload", handle_upload);
-  CHTTP_WS(&srv, "/socket", handle_socket);
-  CHTTP_SSE(&srv, "/sse", handle_sse);
-  CHTTP_GET(&srv, "/fdownload/:filename", handle_download);
-  CHTTP_GET(&srv, "/fmetadata/:filename", handle_fmetadata);
+  /* Expose the listening fd so forked children can close it. */
+  g_server_fd = srv.server_fd;
+
+  CHTTP_POST(&srv, "/login",                handle_login);
+  CHTTP_GET(&srv,  "/",                     handle_root);
+  CHTTP_GET(&srv,  "/hello",                handle_hello);
+  CHTTP_GET(&srv,  "/users/:id",            handle_get_user);
+  CHTTP_POST(&srv, "/users",                handle_create_user);
+  CHTTP_GET(&srv,  "/echo",                 handle_echo);
+  CHTTP_POST(&srv, "/upload",               handle_upload);
+  CHTTP_WS(&srv,   "/socket",               handle_socket);
+  CHTTP_SSE(&srv,  "/sse",                  handle_sse);
+  CHTTP_GET(&srv,  "/fdownload/:filename",  handle_download);
+  CHTTP_GET(&srv,  "/fmetadata/:filename",  handle_fmetadata);
+  /* Authenticated — runs handler in a forked child under user privileges */
+  CHTTP_GET(&srv,  "/whoami",               handle_whoami);
 
   chttp_server_run(&srv);
 

@@ -17,6 +17,7 @@ typedef struct {
 } HttpKV;
 
 typedef struct {
+    int fd;  /* client socket fd, set by connection_thread before dispatch */
     char method[8];
     char path[1024];
     char version[16];

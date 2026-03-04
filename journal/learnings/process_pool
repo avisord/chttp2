@@ -1,0 +1,24 @@
+linux process cannot switch identities dynamically, to be precise, we can decrease the privileges of a process, but we cannot increase them, because the kernel do not allow it by defualt in simple way.
+safe workaround models:
+
+1. fork(), setuid(), exit()
+Master process runs as root.
+Accept request.
+Authenticate user from token.
+fork()
+In child:
+  setgid()
+  initgroups()
+  setuid()
+  Execute user logic.
+  Exit child.
+
+2. 
+Start as root
+Receive job
+fork()
+setgid()
+initgroups()
+setuid()
+Execute user job
+Exit process

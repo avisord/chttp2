@@ -1,0 +1,63 @@
+- we have now sessions setup in the sessins dir
+- once thee request comes where we need authentication we can read the session file and check if the user is authenticated
+- if the user is not authenticated we can send a 401 and close the connection
+
+- now our goal is to run the task under that user's preivilates without any request privialge contamination
+- every request should create a fork once the user is authenticated, and the fork should be able to access the authenticated user's data
+- things which we sould do: 
+  - fork the task
+  - set the new process's privilages to the authenticated user's privilages
+  - set the process's current directory to the authenticated user's home directory
+  - run the task
+  - then return the response to the client 
+  - lastly, kill the forked process
+note: all non focused deatils should be handeld, no dandlign process should be there
+
+- erros should be handled properly as the response are user facing, maintain proper error codes and messages
+
+
+  ---
+  Changes
+
+  chttp.h — HttpRequest.fd
+
+  Added int fd as the first field. Set by connection_thread immediately before dispatch so handlers (including forked ones) can access the raw
+  client socket.
+
+  chttp.c — two edits in connection_thread
+
+  1. req.fd = fd; — wires up the new field.
+  if (res.status != 0)
+      chttp_write_response(fd, &res);
+  2. status == 0 is the sentinel meaning "a forked child already wrote the response; don't write again."
+
+  server.c — fork infrastructure
+
+  g_server_fd — stored after chttp_server_init so children can close the listening socket immediately (preventing them from accidentally accepting
+  new connections).
+
+  fork_and_run(req, res, handler, username)
+
+  ┌────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │  Step  │                                                            What happens                                                            │
+  ├────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1      │ getpwnam_r resolves uid/gid/homedir (reentrant, safe in threads)                                                                   │
+  ├────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 2      │ pipe() created — EOF-based exit detection (no SIGALRM signal trouble in threads)                                                   │
+  ├────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 3      │ fork() — only calling thread is duplicated                                                                                         │
+  ├────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Child  │ close server_fd, initgroups→setgid→setuid, verify drop irreversible, chdir(home), run handler, chttp_write_response(client_fd),    │
+  │        │ _exit(0)                                                                                                                           │
+  ├────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Parent │ select() on pipe read-end, 30s timeout; on timeout → SIGKILL + send 504; always waitpid() to reap (no zombies); set res->status =  │
+  │        │ 0                                                                                                                                  │
+  └────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  DEFINE_AUTH_ROUTE(wrapper, impl) macro — generates a RouteHandler that checks the session cookie, returns 401 immediately if invalid, otherwise
+  calls fork_and_run with the inner handler and authenticated username.
+
+  /whoami — demonstration authenticated endpoint. The child calls getuid()/getgid()/getcwd() and returns them in JSON, proving it's running as the
+  actual OS user with their home as CWD.
+
+

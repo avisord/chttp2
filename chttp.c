@@ -609,14 +609,19 @@ static void *connection_thread(void *arg) {
         return NULL;
     }
 
+    req.fd = fd; /* expose client fd to handlers (used by fork-based auth) */
+
     int dispatched = chttp_dispatch(srv, &req, &res, fd);
-    if (dispatched == -1) return NULL; /* WebSocket: handler owns fd */
+    if (dispatched == -1) return NULL; /* WebSocket/SSE: handler owns fd */
     if (!dispatched) {
         res.status = 404;
         chttp_send_text(&res, "Not Found");
     }
 
-    chttp_write_response(fd, &res);
+    /* status == 0 is a sentinel meaning a forked child already sent the
+     * response directly on fd; skip writing and just close our copy. */
+    if (res.status != 0)
+        chttp_write_response(fd, &res);
     close(fd);
     return NULL;
 }
