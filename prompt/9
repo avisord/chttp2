@@ -1,0 +1,4 @@
+we've added test curl scripts to test all fs apis 
+now createa compilaion script to run all these tests
+also keep in mind that we need to pass args to the scripts so respect that
+args should be valid paths and for those scripts we need real files and dirs to test make sure we have
