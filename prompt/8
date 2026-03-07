@@ -1,0 +1,26 @@
+we have now a authentication setup
+where user can login and get thier session id created
+and then they can use that session id to access authentication routes
+
+we have a test whoami route for authenticated route
+
+now we are going to our main business logic for nas server:
+
+api we need to create:
+
+  - basic file & folder management:  
+    - upload file
+    - download file
+    - delete file
+
+    - create directory
+    - delete directory
+    - list directory
+
+    - rename file
+    - move file
+    - copy file
+
+    - get file metadata
+    - get file content (for text files)
+    - save file content (for text files)

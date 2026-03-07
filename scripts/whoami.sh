@@ -1,11 +1,8 @@
-session=$(cat tmp/session.txt)
 server="http://localhost:8080"
+outdir=$(pwd)/tmp
+ssnfile=$outdir/session.txt
+flags="-b $ssnfile -c $ssnfile"
 
-if [ -z "$session" ]; then
-  echo "Usage: $0 <session_id>"
-  exit 1
-fi
 
-curl $FLAGS $server/whoami \
+curl $flags $server/whoami \
   -H "Content-Type: application/json" \
-  -H "Cookie: session=$session"
