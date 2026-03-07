@@ -1,4 +1,6 @@
+#include <stdio.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "auth/auth.h"
 #include "fs/fs.h"
@@ -23,6 +25,11 @@ DEFINE_AUTH_ROUTE(handle_fs_read,        handle_fs_read_impl)
 DEFINE_AUTH_ROUTE(handle_fs_write,       handle_fs_write_impl)
 
 int main(void) {
+  if (getuid() != 0) {
+    fprintf(stderr, "error: server must be run as root (use sudo)\n");
+    return 1;
+  }
+
   mkdir(SESSION_DIR, 0700);
 
   HttpServer srv;
