@@ -6,4 +6,4 @@
 make || exit 1
 
 echo "Running dist/server..."
-./dist/server "$@"
+sudo ./dist/server "$@"

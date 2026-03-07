@@ -1,4 +1,0 @@
-here is a basic http setup
-create a file upload endpoint in which file is uploaded to uploads folder and in response user can see file metadat in json in response
-
-curl -X POST http://localhost:8000/upload -F "file=@$PWD/prompt/1"
