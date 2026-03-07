@@ -1,0 +1,19 @@
+current this project is in mostly a one or two files
+it is very hard to read and understand all the code in a same file
+
+we need to modularize the code and make it more decoupled in saperate modules 
+
+we need to keep the things saperate:
+
+- dependencies (cJSON)
+- utility code
+- service functions
+  - modules based:  
+   like fs module
+- main http entrypoint 
+
+keep in mind that it should be structured about the generic c projects with a Makefile to build 
+all the code.
+
+this repo should be a example to learn the standard way to modularize a c project
+
