@@ -1,44 +1,42 @@
-CC=gcc
-CFLAGS=-Wall -Wextra
-OUT_DIR=dist
+CC      := gcc
+CFLAGS  := -Wall -Wextra -I src -I lib -I vendor
+LDFLAGS := -lpthread -lpam
 
-# default server name (can be overridden)
-TARGET?=server
+SRC_DIR    := src
+LIB_DIR    := lib
+VENDOR_DIR := vendor
+BUILD_DIR  := build
+OUT_DIR    := dist
+TARGET     := $(OUT_DIR)/server
 
-SRC=$(TARGET).c
-EXTRA_SRCS=
+SRCS := $(shell find $(SRC_DIR) $(LIB_DIR) $(VENDOR_DIR) -name '*.c')
+OBJS := $(patsubst %.c, $(BUILD_DIR)/%.o, $(SRCS))
+DEPS := $(OBJS:.o=.d)
 
-# detect optional sources
-ifeq ($(wildcard chttp.c),chttp.c)
-EXTRA_SRCS+=chttp.c
-CFLAGS+=-lpthread
-endif
+.PHONY: all clean run compdb
 
-ifeq ($(wildcard cJSON.c),cJSON.c)
-EXTRA_SRCS+=cJSON.c
-endif
+all: $(TARGET)
 
-# detect PAM usage
-PAM:=$(shell grep -q pam_appl.h $(SRC) && echo yes)
-ifeq ($(PAM),yes)
-CFLAGS+=-lpam
-endif
+$(TARGET): $(OBJS) | $(OUT_DIR)
+	$(CC) $(OBJS) $(LDFLAGS) -o $@
 
-OUT=$(OUT_DIR)/$(TARGET)
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-all: build
+$(OUT_DIR):
+	mkdir -p $@
 
-build:
-	mkdir -p $(OUT_DIR)
-	@echo "Compiling..."
-	/usr/bin/time -f "compiled in %es" \
-	$(CC) $(SRC) $(EXTRA_SRCS) $(CFLAGS) -o $(OUT)
-
-run: build
-	@echo "Running $(OUT)"
-	/usr/bin/time -f "ran in %es" ./$(OUT)
+-include $(DEPS)
 
 clean:
-	rm -rf $(OUT_DIR)
+	rm -rf $(BUILD_DIR) $(OUT_DIR)
 
-.PHONY: all build run clean
+run: all
+	./$(TARGET)
+
+compdb:
+	python3 -c "\
+import json, os; root=os.getcwd(); srcs=open('/dev/stdin').read().split();\
+db=[{'directory':root,'command':'gcc $(CFLAGS) -c '+f+' -o /dev/null','file':os.path.join(root,f)} for f in sorted(srcs)];\
+open('compile_commands.json','w').write(json.dumps(db,indent=2))" <<< "$(SRCS)"

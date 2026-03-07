@@ -1,0 +1,42 @@
+[
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c lib/chttp.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/lib/chttp.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/auth/auth.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/auth/auth.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/auth/session.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/auth/session.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/fs/fs.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/fs/fs.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/main.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/main.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/routes/routes.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/routes/routes.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c src/utils/utils.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/src/utils/utils.c"
+  },
+  {
+    "directory": "/home/a/projects/minor_project/chttp2",
+    "command": "gcc -Wall -Wextra -I src -I lib -I vendor -c vendor/cJSON.c -o /dev/null",
+    "file": "/home/a/projects/minor_project/chttp2/vendor/cJSON.c"
+  }
+]

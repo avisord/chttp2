@@ -17,3 +17,506 @@ all the code.
 
 this repo should be a example to learn the standard way to modularize a c project
 
+---
+
+       Excellent! Now I have a comprehensive view of the project. Let me compile all the findings into a detailed report:
+
+       COMPREHENSIVE CHTTP2 PROJECT ANALYSIS
+
+       1. DIRECTORY STRUCTURE
+
+       /home/a/projects/minor_project/chttp2/
+       ├── chttp.c                 (21,168 bytes)  - HTTP framework implementation
+       ├── chttp.h                 (3,756 bytes)   - HTTP framework headers
+       ├── cJSON.c                 (80,627 bytes)  - JSON library (external)
+       ├── cJSON.h                 (16,394 bytes)  - JSON library headers
+       ├── server.c                (44,565 bytes)  - Main application server
+       ├── Makefile                              - Build configuration
+       ├── run                                   - Build/run script
+       ├── dist/                                 - Compiled binaries directory
+       ├── sessions/                             - Session storage directory
+       ├── uploads/                              - File uploads directory
+       ├── scripts/                              - Test and utility scripts
+       │   ├── clrssn.sh
+       │   ├── login.sh, whoami.sh
+       │   ├── fslist.sh, fsupload.sh, fsdownload.sh, fsdelfile.sh, etc.
+       │   ├── fstest.sh, runtests.sh
+       │   └── [other fs operation scripts]
+       ├── prompt/                               - Development prompts
+       │   ├── 01-10 (various requirements files)
+       └── journal/                              - Development notes
+
+       ---
+       2. BUILD SYSTEM
+
+       File: /home/a/projects/minor_project/chttp2/Makefile
+
+       - Compiler: gcc with -Wall -Wextra flags
+       - Auto-detection:
+         - Detects chttp.c presence → adds -lpthread
+         - Detects cJSON.c presence → includes it
+         - Detects pam_appl.h in source → adds -lpam for PAM authentication
+       - Targets:
+         - make build - Compile to dist/server
+         - make run - Build and run
+         - make clean - Remove build artifacts
+       - Usage: ./run server or make run
+       - Build command: gcc server.c chttp.c cJSON.c -Wall -Wextra -o dist/server -lpthread -lpam
+
+       ---
+       3. CHTTP.H - HTTP FRAMEWORK HEADERS
+
+       Key Structures:
+
+       typedef struct {
+           int fd;                                    // client socket fd
+           char method[8];
+           char path[1024];
+           char version[16];
+           HttpKV headers[32];      int header_count;
+           HttpKV query[16];        int query_count;
+           HttpKV path_params[8];   int path_param_count;
+           char *body;              size_t body_len;
+           char raw_buf[8192];      // owns all raw bytes
+       } HttpRequest;
+
+       typedef struct {
+           int status;
+           HttpKV headers[32];      int header_count;
+           char body[65536];        size_t body_len;
+       } HttpResponse;
+
+       typedef void (*RouteHandler)(HttpRequest *req, HttpResponse *res);
+       typedef void (*WsHandler)(int fd);
+       typedef void (*SseHandler)(int fd);
+
+       typedef struct {
+           char method[8];
+           char pattern[256];
+           RouteHandler handler;
+           WsHandler ws_handler;
+           SseHandler sse_handler;
+       } Route;
+
+       typedef struct {
+           int port;
+           int server_fd;
+           Route routes[64];        int route_count;
+       } HttpServer;
+
+       Configuration Constants:
+       - CHTTP_MAX_HEADERS = 32
+       - CHTTP_MAX_QUERY_PARAMS = 16
+       - CHTTP_MAX_PATH_PARAMS = 8
+       - CHTTP_MAX_ROUTES = 64
+       - CHTTP_READ_BUFSIZE = 8192
+       - CHTTP_RESP_BUFSIZE = 65536
+
+       Function Signatures:
+
+       // Server lifecycle
+       int  chttp_server_init(HttpServer *srv, int port);
+       void chttp_server_run(HttpServer *srv);
+       void chttp_server_destroy(HttpServer *srv);
+
+       // Routing
+       int  chttp_route(HttpServer *srv, const char *method, const char *pattern, RouteHandler h);
+       int  chttp_ws_route(HttpServer *srv, const char *pattern, WsHandler h);
+       int  chttp_sse_route(HttpServer *srv, const char *pattern, SseHandler h);
+       int  chttp_match_route(const char *pattern, const char *path, HttpKV *params, int *count);
+       int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd);
+
+       // Macros for convenience
+       #define CHTTP_GET(s,p,h)    chttp_route(s, "GET",    p, h)
+       #define CHTTP_POST(s,p,h)   chttp_route(s, "POST",   p, h)
+       #define CHTTP_PUT(s,p,h)    chttp_route(s, "PUT",    p, h)
+       #define CHTTP_DELETE(s,p,h) chttp_route(s, "DELETE", p, h)
+       #define CHTTP_PATCH(s,p,h)  chttp_route(s, "PATCH",  p, h)
+       #define CHTTP_WS(s,p,h)     chttp_ws_route(s,  p, h)
+       #define CHTTP_SSE(s,p,h)    chttp_sse_route(s, p, h)
+
+       // WebSocket I/O
+       int chttp_ws_send(int fd, const char *payload, size_t len);
+       int chttp_ws_recv(int fd, char *buf, size_t bufsize);
+
+       // SSE I/O
+       int chttp_sse_send(int fd, const char *event, const char *data);
+
+       // Parsing
+       int         chttp_parse_request(HttpRequest *req, const char *raw, int raw_len);
+       const char *chttp_query_param(HttpRequest *req, const char *key);
+       const char *chttp_header(HttpRequest *req, const char *key);
+       const char *chttp_path_param(HttpRequest *req, const char *name);
+       void        chttp_url_decode(const char *src, char *dst, size_t dst_size);
+
+       // Response building
+       void chttp_set_status(HttpResponse *res, int code);
+       void chttp_set_header(HttpResponse *res, const char *key, const char *val);
+       void chttp_send_text(HttpResponse *res, const char *text);
+       void chttp_send_json(HttpResponse *res, const char *json_str);
+       void chttp_send_cjson(HttpResponse *res, cJSON *obj);
+       int  chttp_write_response(int fd, HttpResponse *res);
+
+       Macros for routing:
+       - Pattern matching supports path parameters: /users/:id captures id
+       - URL decoding converts %20 → space, + → space
+       - Query string parsing splits on & and =
+
+       ---
+       4. CHTTP.C - HTTP FRAMEWORK IMPLEMENTATION
+
+       Features:
+
+       1. URL Decoding (from_hex, chttp_url_decode)
+         - Handles hex-encoded chars (%20)
+         - Converts + to space
+       2. Query String Parsing (parse_query_string)
+         - Splits on &, parses key=value pairs
+         - URL-decodes values
+       3. HTTP Request Parsing (chttp_parse_request)
+         - Extracts method, path, version from request line
+         - Parses headers (case-insensitive keys)
+         - Separates body at \r\n\r\n
+         - Handles query strings from URL
+       4. Lookup Helpers
+         - chttp_query_param(req, key) - Find query param by key
+         - chttp_header(req, key) - Find header by key (case-insensitive)
+         - chttp_path_param(req, name) - Find path param by name
+       5. Path Parameter Matching (chttp_match_route)
+         - Pattern: /users/:id matches /users/123, captures id=123
+         - Supports wildcard segments starting with :
+         - Exact segment matching for literal parts
+       6. Routing (chttp_route, chttp_ws_route, chttp_sse_route)
+         - Registers routes with method, pattern, and handler
+         - Returns -1 if route table full (max 64)
+       7. WebSocket Support
+         - SHA-1 hashing (RFC 3174) for WS handshake
+         - Base64 encoding for Sec-WebSocket-Accept
+         - WebSocket frames: Unmasked frames (server→client), masked frames (client→server)
+         - chttp_ws_send() - Send unmasked text frame
+         - chttp_ws_recv() - Read masked frame, handle ping/close internally
+         - Frame format: FIN + opcode, payload length (7/16/64-bit), payload
+         - Auto-responds to ping frames
+       8. SSE Support (sse_start, chttp_sse_send)
+         - Sets HTTP 200 OK with text/event-stream content-type
+         - chttp_sse_send(fd, event, data) - Send named or anonymous events
+         - Format: event: name\ndata: payload\n\n or data: payload\n\n
+       9. Dispatch (chttp_dispatch)
+         - Matches route by method and pattern
+         - Calls handler or WS/SSE handler
+         - Returns: 1 (HTTP sent), -1 (fd owned), 0 (no match)
+       10. Response Building
+         - chttp_set_status(res, code) - Set HTTP status code
+         - chttp_set_header(res, key, val) - Add header (overwrites if exists)
+         - chttp_send_text(res, text) - Set Content-Type: text/plain
+         - chttp_send_json(res, json_str) - Set Content-Type: application/json
+         - chttp_send_cjson(res, obj) - Convert cJSON to string and send
+         - chttp_write_response(fd, res) - Write HTTP response to socket
+       11. Connection Handling (connection_thread)
+         - Receives HTTP request (max 8KB)
+         - Parses request, dispatches to handler
+         - Writes response or skips if status == 0 (already sent by handler)
+         - Closes socket
+       12. Server Lifecycle
+         - chttp_server_init(srv, port) - Create socket, bind, listen on port
+         - chttp_server_run(srv) - Infinite accept loop, spawn pthread per connection
+         - chttp_server_destroy(srv) - Close listening socket
+         - Uses pthread_create with detach for concurrent connections
+
+       ---
+       5. SERVER.C - APPLICATION SERVER
+
+       Key Features:
+
+       A. Session Management (Lines 24-166)
+
+       #define SESSION_DIR "./sessions"
+       #define SESSION_ID_BYTES 32
+       #define SESSION_EXPIRY_SEC (24 * 3600)
+
+       // Session format (text file):
+       // id=<64-hex-chars>
+       // username=<username>
+       // created_at=<timestamp>
+       // expires_at=<timestamp>
+
+       Functions:
+       - generate_session_id(out[65]) - Generate 64-char hex from /dev/urandom
+       - pam_conv_func() - PAM conversation function
+       - authenticate_pam(username, password) - Validate credentials via PAM
+       - create_session(username, session_id_out) - Create session file with timestamp
+       - parse_session_cookie(cookie_hdr, out[65]) - Extract session ID from Cookie header
+       - validate_session(session_id, username_out) - Check session file exists, not expired
+
+       B. Fork-Based Authentication (Lines 168-328)
+
+       #define FORK_HANDLER_TIMEOUT_SEC 30
+
+       Function: fork_and_run(req, res, handler, username)
+
+       Flow:
+       1. Look up user info via getpwnam_r() (reentrant)
+       2. Create pipe for EOF-based child exit detection
+       3. Fork process:
+         - Child:
+             - Close listening socket (g_server_fd)
+           - Drop supplementary groups via initgroups()
+           - Set GID via setgid()
+           - Set UID via setuid() (irreversible check: setuid(0) should fail)
+           - chdir() to user home (fallback to /tmp)
+           - Call handler
+           - Write response to client socket
+           - Close pipe write-end (signals parent EOF)
+           - _exit(0)
+         - Parent:
+             - Close pipe write-end
+           - select() on pipe read-end with 30s timeout
+           - If timeout: SIGKILL child, send 504 Gateway Timeout
+           - waitpid() to reap zombie
+           - Set res->status = 0 (sentinel: "already sent response")
+
+       Macro: DEFINE_AUTH_ROUTE(wrapper_name, inner_handler)
+
+       Generates wrapper that:
+       1. Parses session cookie
+       2. Validates session (extracts username)
+       3. Returns 401 if invalid
+       4. Calls fork_and_run() with inner handler
+
+       C. Public Routes (Lines 414-893)
+
+       Authentication Routes:
+       - POST /login - PAM auth → create session → set Set-Cookie
+       - GET /whoami - Fork-based, returns JSON: uid, gid, username, home, shell, cwd
+
+       Public Routes:
+       - GET / - Return "Welcome to chttp!"
+       - GET /hello - Return "Hello, World!"
+       - GET /users/:id - Return JSON user object
+       - POST /users - Create user from JSON body
+       - GET /echo?msg=... - Echo query param
+       - POST /upload - Multipart file upload to uploads/
+       - GET /fdownload/:filename - Download file from uploads/
+       - GET /fmetadata/:filename - Get file metadata (size, mtime, content-type)
+       - GET /socket - WebSocket endpoint (echo + 10s ticks)
+       - GET /sse - Server-Sent Events endpoint (10s ping + message)
+
+       Utility Functions:
+       - mime_from_ext(filename) - Map extension to MIME type
+       - safe_filename(name) - Reject /, \, ..
+       - safe_path(path) - Reject absolute, .., empty (allows ./)
+       - fs_error(res, errno) - Map errno to HTTP status + JSON
+       - parse_multipart(req, res, ...) - Extract file from multipart/form-data
+
+       D. Authenticated File Management API (Lines 933-1373)
+
+       All run under authenticated user's UID. Pattern: handle_*_impl() wrapped with DEFINE_AUTH_ROUTE().
+
+       Routes:
+
+       GET    /fs/list?path=.              - List directory
+       POST   /fs/upload?path=.            - Upload file to directory
+       GET    /fs/download?path=...        - Download file
+       DELETE /fs/file?path=...            - Delete file
+       POST   /fs/mkdir body:{path}        - Recursive mkdir
+       DELETE /fs/dir?path=...             - Remove empty directory
+       POST   /fs/rename body:{path, name} - Rename in same dir
+       POST   /fs/move body:{from, to}     - Move between directories
+       POST   /fs/copy body:{from, to}     - Copy file
+       GET    /fs/stat?path=...            - Get file metadata
+       GET    /fs/content?path=...         - Read text file (max 64 KB)
+       PUT    /fs/content?path=...         - Write text file
+
+       Key Functions:
+       - handle_fs_list_impl() - List entries with size, type, mtime
+       - handle_fs_upload_impl() - Parse multipart, write file
+       - handle_fs_download_impl() - Read file, set Content-Disposition
+       - handle_fs_delete_file_impl() - unlink() file
+       - handle_fs_mkdir_impl() - Recursive mkdir with path splitting
+       - handle_fs_rmdir_impl() - rmdir() (empty only)
+       - handle_fs_rename_impl() - rename() within same directory
+       - handle_fs_move_impl() - rename() across directories
+       - handle_fs_copy_impl() - Read source, write destination
+       - handle_fs_stat_impl() - Get file stats (size, mode, uid, mtime)
+       - handle_fs_read_impl() - Read file content (max 64 KB)
+       - handle_fs_write_impl() - Write body to file
+
+       E. Main Function (Lines 1375-1418)
+
+       int main(void) {
+         mkdir(SESSION_DIR, 0700);  // Create sessions directory
+
+         HttpServer srv;
+         chttp_server_init(&srv, 8080);
+
+         g_server_fd = srv.server_fd;  // Expose for forked children to close
+
+         // Register all 23 routes
+         // ... (see register code above)
+
+         chttp_server_run(&srv);  // Infinite loop
+         chttp_server_destroy(&srv);
+       }
+
+       Registered Routes (23 total):
+       1. POST /login
+       2. GET /, /hello, /users/:id, /echo
+       3. POST /users
+       4. POST /upload
+       5. GET /fdownload/:filename, /fmetadata/:filename
+       6. GET /socket, /sse (WS/SSE)
+       7. GET /whoami (authenticated)
+       8. /fs/* routes (12 authenticated) - list, upload, download, delete file, mkdir, rmdir, rename, move, copy, stat, content read/write
+
+       ---
+       6. CJSON.C and CJSON.H - JSON Library
+
+       - External library (v1.7.19, Dave Gamble)
+       - Used for parsing and creating JSON objects
+       - Key functions used in server:
+         - cJSON_Parse*() - Parse JSON strings
+         - cJSON_CreateObject() - Create JSON object
+         - cJSON_AddStringToObject() - Add string field
+         - cJSON_AddNumberToObject() - Add numeric field
+         - cJSON_AddArrayToObject() - Create array
+         - cJSON_GetObjectItem() - Access field
+         - cJSON_IsString(), cJSON_IsNumber() - Type checks
+         - cJSON_PrintUnformatted() - Serialize to string
+         - cJSON_Delete() - Free object
+
+       ---
+       7. TEST SCRIPTS
+
+       Test structure:
+       - Shell scripts using curl for HTTP testing
+       - Session management via tmp/session.txt (curl -b/-c flags)
+       - Tests for: login, whoami, file operations (list, upload, download, delete, mkdir, rmdir, rename, move, copy, stat, read, write)
+       - Example (login.sh):
+       curl -b session.txt -c session.txt http://localhost:8080/login \
+         -H "Content-Type: application/json" \
+         -d '{"username":"user","password":"pass"}'
+
+       ---
+       8. GLOBAL STATE & ARCHITECTURE SUMMARY
+
+       ┌────────────────┬──────────────────────────────────────────────────┬──────────────────────────┐
+       │   Component    │                     Purpose                      │        Key Files         │
+       ├────────────────┼──────────────────────────────────────────────────┼──────────────────────────┤
+       │ Framework      │ HTTP parsing, routing, response building         │ chttp.h, chttp.c         │
+       ├────────────────┼──────────────────────────────────────────────────┼──────────────────────────┤
+       │ Application    │ Server-specific routes, authentication, file ops │ server.c                 │
+       ├────────────────┼──────────────────────────────────────────────────┼──────────────────────────┤
+       │ Session System │ PAM auth, session files, cookie validation       │ server.c (lines 24-166)  │
+       ├────────────────┼──────────────────────────────────────────────────┼──────────────────────────┤
+       │ Privilege Drop │ Fork-based isolation, UID/GID dropping           │ server.c (lines 168-328) │
+       ├────────────────┼──────────────────────────────────────────────────┼──────────────────────────┤
+       │ JSON           │ Object creation and parsing                      │ cJSON.h, cJSON.c         │
+       └────────────────┴──────────────────────────────────────────────────┴──────────────────────────┘
+
+       Key Global Variable:
+       - static int g_server_fd = -1; - Listening socket FD, set in main(), closed in forked children
+
+       Port: 8080
+
+       Session TTL: 24 hours
+
+       Fork Timeout: 30 seconds
+
+       File Upload Limit: 65 KB response buffer
+
+       Content Read Limit: 64 KB
+
+       ---
+       9. SECURITY DESIGN NOTES
+
+       1. Authentication: PAM-based with session cookies (24h TTL)
+       2. Privilege Isolation: Fork-per-authenticated-request with privilege drop (setuid/setgid irreversibility check)
+       3. Path Validation: safe_path() blocks .., absolute, empty; safe_filename() blocks traversal
+       4. Process Safety: _exit() (not exit()) to prevent stdio double-flush after fork
+       5. Child Monitoring: Pipe-based EOF detection with 30s timeout + SIGKILL
+       6. HTTP Parsing: Strict header parsing with size limits (8 KB request, 65 KB response)
+       7. WebSocket: RFC 6455 compliant with SHA-1 + Base64 handshake
+
+       ---
+       This completes the comprehensive analysis of the chttp2 project. All source files have been read and documented with full function
+       signatures, architectural patterns, and implementation details.
+  ⎿  Done (20 tool uses · 69.5k tokens · 1m 9s)
+
+∴ Thinking…
+
+  Now I have a comprehensive understanding of the codebase. Let me design the modularization plan. Let me launch a Plan agent to design the
+  implementation approach.
+
+  The key things to modularize:
+  1. cJSON.c/cJSON.h - already a dependency, needs to be in a deps/ or vendor/ directory
+  2. chttp.c/chttp.h - the HTTP framework (stays as is or in lib/)
+  3. server.c - the main application that needs to be split into:
+    - Session management (src/auth/session.c/h)
+    - PAM authentication (src/auth/pam_auth.c/h)
+    - Fork/privilege drop (src/auth/fork_auth.c/h)
+    - FS module handlers (src/fs/fs_handlers.c/h)
+    - Utility functions (src/utils/)
+    - Public route handlers (src/routes/)
+    - Main entrypoint (src/main.c)
+
+  I'm sketching out the standard C project structure with separate directories for headers, source code, and organized subdirectories for
+  authentication, filesystem operations, utilities, and route handlers. I'm settling on a straightforward layout for a small-to-medium C project:
+  the main source files go in src/ with separate modules for authentication, filesystem handling, routing, and utilities, while the HTTP framework
+  itself lives in lib/ and external dependencies like cJSON are in vendor/. about what makes sense for a standard C project structure. For
+  educational purposes, a medium-sized project would benefit from organizing code by feature—separating authentication logic with session handling
+  and PAM integration, filesystem operations, and route handlers into their own modules with corresponding headers.
+
+  Now I'm thinking through the directory layout, including the HTTP framework library itself, third-party dependencies like cJSON, build output,
+  runtime session storage, and development scripts. For the build system, I need to recursively find all C source files, compile each to object
+  files, link them together, and configure the proper include paths.
+
+  Writing Makefile pattern...
+
+  Now I'm planning out the module structure—main.c will handle server initialization, route registration, and session directory setup, while the
+  auth module will manage session handling. I'm laying out the utility functions for file handling and MIME type detection, then mapping out all
+  the public route handlers for the API endpoints including authentication, file operations, WebSocket, and SSE support.
+
+  Now I'm thinking through the module structure—the macro for generating auth routes creates static functions so there shouldn't be symbol
+  conflicts, but I need to make sure the global server file descriptor is properly declared in a header and defined once in main. For the
+  authentication layer, I'm considering whether to keep PAM, session management, and process forking together or split them into separate files.
+  I'm settling on a cleaner structure: session management in one file, PAM authentication and privilege dropping in another, then separating route
+  handlers into their own modules for public endpoints, filesystem operations, and utilities.
+
+  Now I need to think through the header dependencies carefully to avoid circular includes—the key is establishing a clear hierarchy where
+  lower-level utilities get included by higher-level modules, starting with the vendor code and working up through the HTTP library to the
+  domain-specific auth and filesystem handlers.
+
+  I'm also realizing that g_server_fd needs to be handled properly in the new structure; I'll declare it as extern in the auth header and define it
+   in main.c to keep the global pattern consistent with what's already there.
+
+  The DEFINE_AUTH_ROUTE macro currently lives inline in server.c, but since it generates static functions and depends on fork_and_run and session
+  functions, it belongs in the auth header where those declarations are available.
+
+  Now I'm mapping out the concrete file changes needed: moving the vendor and library files into their new directories, updating the Makefile for
+  the new structure, and reorganizing the source files accordingly. I need to move the JSON and HTTP libraries to their respective directories, and
+   then update the build script to use make instead of the current run approach.
+
+---
+
+  Directory structure created:
+  vendor/    ← cJSON.c, cJSON.h (third-party, never modify)
+  lib/       ← chttp.c, chttp.h (framework)
+  src/
+    main.c        ← entry + 13 DEFINE_AUTH_ROUTE calls + route registration
+    auth/         ← auth.h, session.c, auth.c (PAM, sessions, fork_and_run)
+    fs/           ← fs.h, fs.c (12 /fs/* _impl handlers)
+    routes/       ← routes.h, routes.c (public handlers + handle_whoami_impl)
+    utils/        ← utils.h, utils.c (mime_from_ext, safe_path, fs_error, etc.)
+  build/     ← .o/.d files (auto-generated)
+  dist/      ← binary
+
+  Key design decisions honored:
+  - DEFINE_AUTH_ROUTE — all 13 invocations in main.c, centralizing the auth boundary
+  - g_server_fd — defined (non-static) in main.c, extern in auth.h
+  - CHILD_ERR macro stays inside fork_and_run() in auth.c (never in a header)
+  - FS_CONTENT_MAX stays local to fs.c
+  - cJSON.h included explicitly in files that use it (routes.c, fs.c)
+  - -MMD -MP for automatic header dependency tracking
+
+  To run tests: sudo ./dist/server & sleep 1 && ./scripts/runtests.sh <username> <password>
+
