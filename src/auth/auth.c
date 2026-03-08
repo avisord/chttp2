@@ -174,6 +174,7 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     err_res.status = 504;
     chttp_send_json(&err_res, "{\"error\":\"Request handler timed out\"}");
     chttp_write_response(client_fd, &err_res);
+    chttp_response_free(&err_res);
   }
 
   /*

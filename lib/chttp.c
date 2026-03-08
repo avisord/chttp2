@@ -501,6 +501,28 @@ int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd)
     return 0;
 }
 
+/* ---- Response body helpers ---- */
+
+static int body_ensure(HttpResponse *res, size_t needed) {
+    if (res->body_cap >= needed) return 0;
+    char *p = realloc(res->body, needed + 1);
+    if (!p) return -1;
+    res->body     = p;
+    res->body_cap = needed;
+    return 0;
+}
+
+int chttp_body_alloc(HttpResponse *res, size_t size) {
+    return body_ensure(res, size);
+}
+
+void chttp_response_free(HttpResponse *res) {
+    free(res->body);
+    res->body     = NULL;
+    res->body_len = 0;
+    res->body_cap = 0;
+}
+
 /* ---- Response building ---- */
 
 static const char *status_text(int code) {
@@ -538,19 +560,19 @@ void chttp_set_header(HttpResponse *res, const char *key, const char *val) {
 void chttp_send_text(HttpResponse *res, const char *text) {
     chttp_set_header(res, "Content-Type", "text/plain");
     size_t len = strlen(text);
-    if (len >= CHTTP_RESP_BUFSIZE) len = CHTTP_RESP_BUFSIZE - 1;
+    if (body_ensure(res, len) < 0) return;
     memcpy(res->body, text, len);
     res->body[len] = '\0';
-    res->body_len = len;
+    res->body_len  = len;
 }
 
 void chttp_send_json(HttpResponse *res, const char *json_str) {
     chttp_set_header(res, "Content-Type", "application/json");
     size_t len = strlen(json_str);
-    if (len >= CHTTP_RESP_BUFSIZE) len = CHTTP_RESP_BUFSIZE - 1;
+    if (body_ensure(res, len) < 0) return;
     memcpy(res->body, json_str, len);
     res->body[len] = '\0';
-    res->body_len = len;
+    res->body_len  = len;
 }
 
 void chttp_send_cjson(HttpResponse *res, cJSON *obj) {
@@ -622,6 +644,7 @@ static void *connection_thread(void *arg) {
      * response directly on fd; skip writing and just close our copy. */
     if (res.status != 0)
         chttp_write_response(fd, &res);
+    chttp_response_free(&res);
     close(fd);
     return NULL;
 }

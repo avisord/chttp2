@@ -9,7 +9,6 @@
 #define CHTTP_MAX_PATH_PARAMS  8
 #define CHTTP_MAX_ROUTES       64
 #define CHTTP_READ_BUFSIZE     8192
-#define CHTTP_RESP_BUFSIZE     65536
 
 typedef struct {
     char key[128];
@@ -31,7 +30,9 @@ typedef struct {
 typedef struct {
     int status;
     HttpKV headers[CHTTP_MAX_HEADERS]; int header_count;
-    char body[CHTTP_RESP_BUFSIZE]; size_t body_len;
+    char  *body;
+    size_t body_len;
+    size_t body_cap;
 } HttpResponse;
 
 typedef void (*RouteHandler)(HttpRequest *req, HttpResponse *res);
@@ -95,5 +96,12 @@ void chttp_send_text(HttpResponse *res, const char *text);
 void chttp_send_json(HttpResponse *res, const char *json_str);
 void chttp_send_cjson(HttpResponse *res, cJSON *obj);
 int  chttp_write_response(int fd, HttpResponse *res);
+
+/* Pre-allocate `size` bytes in res->body for direct writing (e.g. fread).
+ * Returns 0 on success, -1 on OOM. */
+int  chttp_body_alloc(HttpResponse *res, size_t size);
+
+/* Free res->body and zero body fields. Safe on a zero-init'd res. */
+void chttp_response_free(HttpResponse *res);
 
 #endif /* CHTTP_H */

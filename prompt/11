@@ -1,0 +1,8 @@
+Plan to implement                                                                                                                     
+Plan: Dynamic Response Body Allocation                                                                                                
+Context                                                                                                                               
+HttpResponse.body is a fixed char body[65536] array baked into the struct.
+Every response is silently capped at 64 KB — large directory listings, big file.
+downloads, and large text files either truncate or hit the "file too large" guard.
+The fix: make the body heap-allocated and growable so there is no hard cap. 
+

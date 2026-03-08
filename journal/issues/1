@@ -1,1 +1,6 @@
-not able to create session with user b
+1. not able to create session with user b - fixed - run as root
+2. sessiong is not visible - fixed - changed permissins to 0644
+3. response object is limitted to 64 KB - fixed - dynamic allocation
+4. downloading large files it throwing 503 error -  
+5. file content is stripped for large files
+6. 

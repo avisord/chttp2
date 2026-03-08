@@ -111,13 +111,19 @@ void handle_fs_download_impl(HttpRequest *req, HttpResponse *res) {
   long fsize = ftell(f);
   fseek(f, 0, SEEK_SET);
 
-  if (fsize < 0 || fsize >= (long)CHTTP_RESP_BUFSIZE) {
+  if (fsize < 0) {
     fclose(f);
-    chttp_set_status(res, 400);
-    chttp_send_json(res, "{\"error\":\"File too large\",\"errno\":0}");
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Failed to read file size\",\"errno\":0}");
     return;
   }
 
+  if (chttp_body_alloc(res, (size_t)fsize) < 0) {
+    fclose(f);
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Out of memory\",\"errno\":0}");
+    return;
+  }
   res->body_len = fread(res->body, 1, (size_t)fsize, f);
   fclose(f);
 

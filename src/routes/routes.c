@@ -257,13 +257,19 @@ void handle_download(HttpRequest *req, HttpResponse *res) {
   long fsize = ftell(f);
   fseek(f, 0, SEEK_SET);
 
-  if (fsize < 0 || fsize >= (long)CHTTP_RESP_BUFSIZE) {
+  if (fsize < 0) {
     fclose(f);
     chttp_set_status(res, 500);
-    chttp_send_text(res, "File too large to serve");
+    chttp_send_text(res, "Failed to read file size");
     return;
   }
 
+  if (chttp_body_alloc(res, (size_t)fsize) < 0) {
+    fclose(f);
+    chttp_set_status(res, 500);
+    chttp_send_text(res, "Out of memory");
+    return;
+  }
   res->body_len = fread(res->body, 1, (size_t)fsize, f);
   fclose(f);
 
