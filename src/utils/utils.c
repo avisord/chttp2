@@ -34,7 +34,7 @@ int safe_filename(const char *name) {
 }
 
 int safe_path(const char *path) {
-  if (!path || !*path || path[0] == '/')
+  if (!path || !*path)
     return 0;
   if (strstr(path, ".."))
     return 0;

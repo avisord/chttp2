@@ -116,8 +116,8 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     if (setuid(pw->pw_uid) < 0)
       CHILD_ERR(500, "{\"error\":\"Failed to set process user\"}");
 
-    /* Verify privilege drop is irreversible. */
-    if (setuid(0) == 0)
+    /* Verify privilege drop is irreversible (skip if user is root). */
+    if (pw->pw_uid != 0 && setuid(0) == 0)
       CHILD_ERR(500, "{\"error\":\"Privilege drop verification failed\"}");
 
     /* Change to user's home directory; fall back to /tmp on failure. */
