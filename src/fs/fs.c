@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -411,6 +412,89 @@ void handle_fs_read_impl(HttpRequest *req, HttpResponse *res) {
   cJSON_AddStringToObject(obj, "content", content);
   free(content);
 
+  chttp_send_cjson(res, obj);
+  cJSON_Delete(obj);
+}
+
+/* POST /fs/upload-stream?path=docs/file.txt
+ *
+ * Streaming upload: the handler runs in a forked child after privilege drop.
+ * It writes the partial body already in req->body, then loop-recvs the
+ * remainder in 64 KB chunks directly from req->fd.  TCP flow control provides
+ * natural backpressure — blocking on fwrite() stops recv(), which fills the
+ * socket buffer and signals the sender to slow down.
+ *
+ * Requires Content-Length header.  On success returns 201 + file stat JSON.
+ * Partial files are unlinked on error mid-transfer.
+ */
+void handle_fs_stream_upload_impl(HttpRequest *req, HttpResponse *res) {
+  const char *path = chttp_query_param(req, "path");
+  if (!path || !safe_path(path)) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid path\",\"errno\":0}");
+    return;
+  }
+
+  const char *cl_str = chttp_header(req, "Content-Length");
+  if (!cl_str) {
+    chttp_set_status(res, 411);
+    chttp_send_json(res, "{\"error\":\"Content-Length required\"}");
+    return;
+  }
+  size_t content_length = (size_t)strtoul(cl_str, NULL, 10);
+
+  FILE *f = fopen(path, "wb");
+  if (!f) { fs_error(res, errno); return; }
+
+  /* Write partial body that arrived with the headers in the initial recv. */
+  size_t written = 0;
+  if (req->body && req->body_len > 0) {
+    if (fwrite(req->body, 1, req->body_len, f) != req->body_len) {
+      fclose(f); unlink(path); fs_error(res, errno); return;
+    }
+    written = req->body_len;
+  }
+
+  /* Stream remaining bytes in 64 KB chunks.  Blocking I/O gives us
+   * backpressure for free: slow fwrite → stop recv → TCP window shrinks. */
+  char chunk[65536];
+  while (written < content_length) {
+    size_t want = sizeof(chunk);
+    if (content_length - written < want)
+      want = content_length - written;
+
+    int r = recv(req->fd, chunk, want, 0);
+    if (r <= 0) {
+      fclose(f); unlink(path);
+      chttp_set_status(res, 400);
+      chttp_send_json(res, "{\"error\":\"Upload interrupted\"}");
+      return;
+    }
+
+    if (fwrite(chunk, 1, (size_t)r, f) != (size_t)r) {
+      fclose(f); unlink(path); fs_error(res, errno); return;
+    }
+    written += (size_t)r;
+  }
+  fclose(f);
+
+  struct stat st;
+  if (stat(path, &st) != 0) { fs_error(res, errno); return; }
+
+  char mtime_str[32];
+  strftime(mtime_str, sizeof(mtime_str), "%Y-%m-%dT%H:%M:%SZ",
+           gmtime(&st.st_mtime));
+
+  const char *slash = strrchr(path, '/');
+  const char *basename = slash ? slash + 1 : path;
+
+  cJSON *obj = cJSON_CreateObject();
+  cJSON_AddStringToObject(obj, "path",     path);
+  cJSON_AddStringToObject(obj, "filename", basename);
+  cJSON_AddNumberToObject(obj, "size_bytes", (double)st.st_size);
+  cJSON_AddStringToObject(obj, "modified_at", mtime_str);
+
+  chttp_set_status(res, 201);
   chttp_send_cjson(res, obj);
   cJSON_Delete(obj);
 }

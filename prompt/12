@@ -1,0 +1,28 @@
+request is stack allocated, upload size is capped - will need to do a streaming upload in which request body will be read in chunks and written in file by chunks with backpressure control to no overwhelm the memory.
+
+● Zero warnings, clean build. Here's a summary of everything that landed:
+
+  Response side (downloads — unlimited):
+  - HttpResponse.body is now heap-allocated (char *body + body_cap)
+  - body_ensure() grows it via realloc; chttp_send_text/json use it automatically
+  - chttp_body_alloc() / chttp_response_free() are public API
+  - handle_download and handle_fs_download_impl removed the 64 KB guard and use chttp_body_alloc
+
+  Request side (uploads — configurable limit):
+  - HttpRequest.body_heap tracks any heap-allocated body buffer
+  - HttpServer.max_body_size controls the cap (default 64 MB); set to 0 for unlimited
+  - connection_thread reads headers first, then loop-recvs the full body if Content-Length exceeds what the initial recv got; returns 413
+   if over limit
+
+  To raise or remove the limit in main.c:
+  chttp_server_init(&srv, 8080);
+  srv.max_body_size = 0;  // unlimited
+
+✻ Crunched for 1m 3s
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)
+
+

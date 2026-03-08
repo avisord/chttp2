@@ -220,9 +220,17 @@ int chttp_route(HttpServer *srv, const char *method,
     Route *r = &srv->routes[srv->route_count++];
     strncpy(r->method,  method,  sizeof(r->method)  - 1);
     strncpy(r->pattern, pattern, sizeof(r->pattern) - 1);
-    r->handler     = h;
-    r->ws_handler  = NULL;
-    r->sse_handler = NULL;
+    r->handler      = h;
+    r->ws_handler   = NULL;
+    r->sse_handler  = NULL;
+    r->is_streaming = 0;
+    return 0;
+}
+
+int chttp_stream_route(HttpServer *srv, const char *method,
+                       const char *pattern, RouteHandler h) {
+    if (chttp_route(srv, method, pattern, h) < 0) return -1;
+    srv->routes[srv->route_count - 1].is_streaming = 1;
     return 0;
 }
 
@@ -495,6 +503,43 @@ int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd)
             return -1; /* fd owned by sse handler */
         }
 
+        /* For non-streaming routes: buffer the full body before calling the
+         * handler.  Streaming routes receive only the partial body that arrived
+         * with the headers; they read the rest themselves from req->fd. */
+        if (!r->is_streaming) {
+            const char *cl = chttp_header(req, "Content-Length");
+            if (cl) {
+                size_t clen = (size_t)strtoul(cl, NULL, 10);
+                if (srv->max_body_size > 0 && clen > srv->max_body_size) {
+                    const char *r413 =
+                        "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\n\r\n";
+                    write(fd, r413, strlen(r413));
+                    return -2; /* response already written */
+                }
+                if (clen > req->body_len) {
+                    char *heap = malloc(clen + 1);
+                    if (!heap) {
+                        const char *r500 =
+                            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
+                        write(fd, r500, strlen(r500));
+                        return -2;
+                    }
+                    if (req->body && req->body_len > 0)
+                        memcpy(heap, req->body, req->body_len);
+                    size_t got = req->body_len;
+                    while (got < clen) {
+                        int r = recv(fd, heap + got, clen - got, 0);
+                        if (r <= 0) { free(heap); return -2; }
+                        got += (size_t)r;
+                    }
+                    heap[clen]    = '\0';
+                    req->body_heap = heap;
+                    req->body      = heap;
+                    req->body_len  = clen;
+                }
+            }
+        }
+
         r->handler(req, res);
         return 1;
     }
@@ -535,6 +580,8 @@ static const char *status_text(int code) {
         case 403: return "Forbidden";
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
+        case 411: return "Length Required";
+        case 413: return "Content Too Large";
         case 500: return "Internal Server Error";
         default:  return "Unknown";
     }
@@ -591,6 +638,13 @@ int chttp_write_response(int fd, HttpResponse *res) {
         n += snprintf(hbuf + n, sizeof(hbuf) - n,
                       "%s: %s\r\n", res->headers[i].key, res->headers[i].value);
 
+    /* CORS — allow all origins while UI is on a different origin */
+    n += snprintf(hbuf + n, sizeof(hbuf) - n,
+                  "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+                  "Access-Control-Allow-Credentials: true\r\n"
+                  "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
+                  "Access-Control-Allow-Headers: Content-Type, Cookie\r\n");
+
     n += snprintf(hbuf + n, sizeof(hbuf) - n,
                   "Content-Length: %zu\r\n\r\n", res->body_len);
 
@@ -633,8 +687,28 @@ static void *connection_thread(void *arg) {
 
     req.fd = fd; /* expose client fd to handlers (used by fork-based auth) */
 
+    /* Handle CORS preflight before routing — no handler needed */
+    if (strcmp(req.method, "OPTIONS") == 0) {
+        const char *pre =
+            "HTTP/1.1 204 No Content\r\n"
+            "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+            "Access-Control-Allow-Credentials: true\r\n"
+            "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: Content-Type, Cookie\r\n"
+            "Access-Control-Max-Age: 86400\r\n"
+            "Content-Length: 0\r\n\r\n";
+        write(fd, pre, strlen(pre));
+        close(fd);
+        return NULL;
+    }
+
     int dispatched = chttp_dispatch(srv, &req, &res, fd);
     if (dispatched == -1) return NULL; /* WebSocket/SSE: handler owns fd */
+    if (dispatched == -2) {            /* 413/500 already written by dispatch */
+        free(req.body_heap);
+        close(fd);
+        return NULL;
+    }
     if (!dispatched) {
         res.status = 404;
         chttp_send_text(&res, "Not Found");
@@ -644,6 +718,7 @@ static void *connection_thread(void *arg) {
      * response directly on fd; skip writing and just close our copy. */
     if (res.status != 0)
         chttp_write_response(fd, &res);
+    free(req.body_heap);
     chttp_response_free(&res);
     close(fd);
     return NULL;
@@ -651,7 +726,8 @@ static void *connection_thread(void *arg) {
 
 int chttp_server_init(HttpServer *srv, int port) {
     memset(srv, 0, sizeof(*srv));
-    srv->port = port;
+    srv->port          = port;
+    srv->max_body_size = 64 * 1024 * 1024; /* 64 MB default; set to 0 for unlimited */
 
     srv->server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (srv->server_fd < 0) { perror("socket"); return -1; }

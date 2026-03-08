@@ -185,3 +185,107 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
   res->status = 0;
   return 0;
 }
+
+int fork_and_stream(HttpRequest *req, HttpResponse *res,
+                    RouteHandler handler, const char *username) {
+  struct passwd pw_buf, *pw;
+  char pw_strbuf[1024];
+  if (getpwnam_r(username, &pw_buf, pw_strbuf, sizeof(pw_strbuf), &pw) != 0 ||
+      !pw) {
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"System user account not found\"}");
+    return -1;
+  }
+
+  int pipefd[2];
+  if (pipe(pipefd) < 0) {
+    chttp_set_status(res, 503);
+    chttp_send_json(res, "{\"error\":\"Service temporarily unavailable\"}");
+    return -1;
+  }
+
+  int client_fd = req->fd;
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    chttp_set_status(res, 503);
+    chttp_send_json(res, "{\"error\":\"Service temporarily unavailable\"}");
+    return -1;
+  }
+
+  if (pid == 0) {
+    close(pipefd[0]);
+    if (g_server_fd >= 0) close(g_server_fd);
+
+#define SCHILD_ERR(http_code, json_msg)                                        \
+  do {                                                                         \
+    HttpResponse _er;                                                          \
+    memset(&_er, 0, sizeof(_er));                                              \
+    _er.status = (http_code);                                                  \
+    chttp_send_json(&_er, (json_msg));                                         \
+    chttp_write_response(client_fd, &_er);                                     \
+    chttp_response_free(&_er);                                                 \
+    close(client_fd);                                                          \
+    close(pipefd[1]);                                                          \
+    _exit(1);                                                                  \
+  } while (0)
+
+    if (initgroups(username, pw->pw_gid) < 0)
+      SCHILD_ERR(500, "{\"error\":\"Failed to initialise supplementary groups\"}");
+    if (setgid(pw->pw_gid) < 0)
+      SCHILD_ERR(500, "{\"error\":\"Failed to set process group\"}");
+    if (setuid(pw->pw_uid) < 0)
+      SCHILD_ERR(500, "{\"error\":\"Failed to set process user\"}");
+    if (pw->pw_uid != 0 && setuid(0) == 0)
+      SCHILD_ERR(500, "{\"error\":\"Privilege drop verification failed\"}");
+    if (chdir(pw->pw_dir) < 0) chdir("/tmp");
+
+    HttpResponse child_res;
+    memset(&child_res, 0, sizeof(child_res));
+    child_res.status = 200;
+    handler(req, &child_res);
+
+    chttp_write_response(client_fd, &child_res);
+    chttp_response_free(&child_res);
+    close(client_fd);
+    close(pipefd[1]);
+    _exit(0);
+
+#undef SCHILD_ERR
+  }
+
+  /* Parent: wait up to FORK_STREAM_TIMEOUT_SEC for the upload to complete. */
+  close(pipefd[1]);
+
+  fd_set rfds;
+  FD_ZERO(&rfds);
+  FD_SET(pipefd[0], &rfds);
+  struct timeval tv = {.tv_sec = FORK_STREAM_TIMEOUT_SEC, .tv_usec = 0};
+
+  int sel;
+  do {
+    sel = select(pipefd[0] + 1, &rfds, NULL, NULL, &tv);
+  } while (sel < 0 && errno == EINTR);
+
+  close(pipefd[0]);
+
+  int timed_out = (sel <= 0);
+  if (timed_out) kill(pid, SIGKILL);
+
+  int wstatus;
+  waitpid(pid, &wstatus, 0);
+
+  if (timed_out) {
+    HttpResponse err_res;
+    memset(&err_res, 0, sizeof(err_res));
+    err_res.status = 504;
+    chttp_send_json(&err_res, "{\"error\":\"Upload timed out\"}");
+    chttp_write_response(client_fd, &err_res);
+    chttp_response_free(&err_res);
+  }
+
+  res->status = 0;
+  return 0;
+}

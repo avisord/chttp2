@@ -13,3 +13,4 @@ void handle_fs_copy_impl(HttpRequest *req, HttpResponse *res);
 void handle_fs_stat_impl(HttpRequest *req, HttpResponse *res);
 void handle_fs_read_impl(HttpRequest *req, HttpResponse *res);
 void handle_fs_write_impl(HttpRequest *req, HttpResponse *res);
+void handle_fs_stream_upload_impl(HttpRequest *req, HttpResponse *res);

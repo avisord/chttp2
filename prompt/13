@@ -1,0 +1,56 @@
+lets create a new stream upload endpoint:
+
+here is my plan (vlidate it):
+
+
+1. request arrives
+2. parse & allocate headers in stack
+3. read content length
+4. here is the thing, just to this in parent process and further we will do in child process
+5. fork(), setuid() ... etc to drop privileges
+6. in child process, read body in chunks and write to file 
+7. do backpressure control to stop the memory from being exhausted
+8. in parent process, we need to wait to child process as this upload can be long
+9. at last we need to send response to client about file stat
+
+---
+
+
+  Steps 1-3 — OK. This is what connection_thread already does. Headers fit in 8 KB, body is not yet read.
+
+  Step 4 — valid, but requires an architectural change. Currently connection_thread does the two-phase body read before dispatch, so by
+  the time any handler runs the body is already buffered. For a streaming route we need to skip that and leave the body on the socket.
+  This means we need a way to mark a route as "streaming" so connection_thread knows to not buffer the body before calling the handler.
+
+  Step 5 — OK, same as current fork_and_run.
+
+  Step 6 — OK, but one subtlety: the initial recv in connection_thread may have already pulled some body bytes along with the headers
+  (the first 8 KB). The child needs to write those bytes to the file first, then loop-recv the rest from req->fd in chunks.
+
+  Step 7 — backpressure is automatic with blocking I/O. If fwrite() to disk is slow, the child blocks, stops calling recv(), the socket
+  receive buffer fills up, and TCP advertises a smaller window back to the sender. Nothing explicit needed.
+
+  Step 8 — timeout problem. Current fork_and_run hard-kills the child after 30 seconds. A large upload would be killed. The streaming
+  route needs either no timeout or a very long one (e.g. 24h). Need a separate wait function.
+
+  Step 9 — OK, child calls stat() on the written file and sends the response directly on req->fd.
+
+  ---
+  Resulting implementation plan
+
+  ┌───────────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │       What        │                                      Detail                                       │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ New route flag    │ is_streaming on Route; CHTTP_STREAM_POST macro                                    │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ connection_thread │ Skip two-phase body read for streaming routes (do route match first, then decide) │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ fork_and_stream   │ Like fork_and_run but: no timeout, passes partial_body+partial_len to child       │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ Child             │ Write partial body → loop-recv chunks (64 KB) → fwrite → stat → send response     │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ New endpoint      │ POST /fs/upload-stream?path=<dir>                                                 │
+  └───────────────────┴───────────────────────────────────────────────────────────────────────────────────┘
+
+  Want me to implement this?
+

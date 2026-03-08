@@ -154,7 +154,7 @@ int parse_multipart(HttpRequest *req, HttpResponse *res,
 
   char *file_data = body_start + 4;
   char end_delim[134] = "\r\n--";
-  strncat(end_delim, boundary, sizeof(end_delim) - 5);
+  strncat(end_delim, boundary, sizeof(end_delim) - strlen(end_delim) - 1);
   char *file_end = strstr(file_data, end_delim);
   if (!file_end) {
     chttp_set_status(res, 400);

@@ -21,8 +21,9 @@ DEFINE_AUTH_ROUTE(handle_fs_rename,      handle_fs_rename_impl)
 DEFINE_AUTH_ROUTE(handle_fs_move,        handle_fs_move_impl)
 DEFINE_AUTH_ROUTE(handle_fs_copy,        handle_fs_copy_impl)
 DEFINE_AUTH_ROUTE(handle_fs_stat,        handle_fs_stat_impl)
-DEFINE_AUTH_ROUTE(handle_fs_read,        handle_fs_read_impl)
-DEFINE_AUTH_ROUTE(handle_fs_write,       handle_fs_write_impl)
+DEFINE_AUTH_ROUTE(handle_fs_read,          handle_fs_read_impl)
+DEFINE_AUTH_ROUTE(handle_fs_write,         handle_fs_write_impl)
+DEFINE_STREAM_AUTH_ROUTE(handle_fs_stream_upload, handle_fs_stream_upload_impl)
 
 int main(void) {
   if (getuid() != 0) {
@@ -65,8 +66,9 @@ int main(void) {
   CHTTP_POST(&srv,   "/fs/move",     handle_fs_move);
   CHTTP_POST(&srv,   "/fs/copy",     handle_fs_copy);
   CHTTP_GET(&srv,    "/fs/stat",     handle_fs_stat);
-  CHTTP_GET(&srv,    "/fs/content",  handle_fs_read);
-  CHTTP_PUT(&srv,    "/fs/content",  handle_fs_write);
+  CHTTP_GET(&srv,    "/fs/content",       handle_fs_read);
+  CHTTP_PUT(&srv,    "/fs/content",       handle_fs_write);
+  CHTTP_STREAM_POST(&srv, "/fs/upload-stream", handle_fs_stream_upload);
 
   chttp_server_run(&srv);
 
