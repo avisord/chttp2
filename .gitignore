@@ -4,4 +4,4 @@ dist
 tmp
 uploads
 .cache
-.cache/clangd
+build
