@@ -3,4 +3,5 @@
 3. response object is limitted to 64 KB - fixed - dynamic allocation
 4. downloading large files it throwing 503 error -  
 5. file content is stripped for large files
-6. 
+6. preview api is not impelemented which will serve files along with mimetype and respond with different behaviours with different headers like: range requsts
+7. 
