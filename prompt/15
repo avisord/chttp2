@@ -1,0 +1,391 @@
+resumable uploads with chunked checksums and ability to pause and resume uploads:
+
+1. client prepares upload:
+  - client prepares hash of each chunk
+  - client builds a menifest of all the chunks:
+    {
+      filename
+      file_size
+      chunk_size
+      chunk_count
+      chunk_hashes[]
+    }
+2. upload sessiong starts:
+  - client sends manifest to server
+  - server validates manifest and generates a upload_id
+  - server create temporary files:  
+    .tmp-upload-<upload_id>.data
+    .tmp-upload-<upload_id>.meta
+    .tmp-upload-<upload_id>.state
+    <filename> reserved for final file
+  - server stores these files and response with upload_id
+
+3. client start uploading if not resumed if resumend it will check current state of fiile on server.
+  - on resume: server reads .tmp-upload-<upload_id>.state and resumes upload from last known offset
+  - client skips already uploaded chunks
+
+4. client uploads chunks:
+  - in headers: 
+    upload_id, chunk_index, chunk_size
+
+5. server validates chunk:
+  - upload_id exists
+  - chunk_index is in range
+  - copute chunk hash
+  - retrive extepcted chunk hash from manifest
+  - compare chunk hash with expected hash
+  - if mismatch: abort upload
+
+6. write chunk to file:
+  - offset = chunk_index * chunk_size
+  - write chunk to .tmp-upload-upload_id.data
+  - update .tmp-upload-upload_id.state
+  - responds success 
+  - detect completion:
+  - after each chunk write:
+    - server checks bitset, if all bits are set: upload complete
+
+7. finalize upload:
+  - server reads .tmp-upload-upload_id.state and calculates total size
+  - rename tmp file to final file name
+  - remove .tmp-upload-upload_id.data, .tmp-upload-upload_id.meta, .tmp-upload-upload_id.state, <filename>
+  - respond success
+
+8. error handling:
+  - if chunk verification flails:
+    - respond with error
+    - pause upload
+    - client retries upto a limit (say 10 times)
+    - if all retries fail: abort upload with message
+
+9. resume upload:
+  - if upload_id exists on server:
+    - server reads .tmp-upload-upload_id.state and resumes upload from last known offset
+    - client skips already uploaded chunks
+    - resume upload
+    - after complition:
+      - rename tmp file to final file name
+
+10. instead of texts use bitsets to track upload progress
+
+FINAL ALGORITHM:
+CLIENT
+1 compute chunk hashes
+2 send manifest
+3 receive upload_id
+4 query uploaded chunks
+5 upload missing chunks
+6 finish
+
+SERVER
+1 create upload session
+2 store metadata
+3 allocate temp file
+4 receive chunk
+5 verify hash
+6 write chunk
+7 mark state
+8 when all chunks done → finalize
+
+
+---
+
+Plan to implement                                                                                                                               │
+│                                                                                                                                                 │
+│ Plan: Chunked Manifest-Based Resumable Upload                                                                                                   │
+│                                                                                                                                                 │
+│ Context                                                                                                                                         │
+│                                                                                                                                                 │
+│ The current resumable upload (/fs/upload-stream-resumable) is a single-offset design:                                                           │
+│ it tracks bytes written and resumes from the last byte boundary. This has no per-chunk                                                          │
+│ integrity verification, no ability to skip already-good data, and no bitset tracking.                                                           │
+│                                                                                                                                                 │
+│ Replace it entirely with a proper chunked upload protocol:                                                                                      │
+│ - Client pre-computes SHA-256 per chunk, builds a manifest                                                                                      │
+│ - Server creates an upload session keyed by a random upload_id                                                                                  │
+│ - Client uploads only missing chunks (any order)                                                                                                │
+│ - Server validates each chunk's SHA-256 before writing                                                                                          │
+│ - Server tracks completion with a binary bitset                                                                                                 │
+│ - Resume: client queries which chunks arrived, uploads only the missing ones                                                                    │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ New API                                                                                                                                         │
+│                                                                                                                                                 │
+│ ┌────────┬───────────────────────────────┬──────┬───────────────────────────────────┐                                                           │
+│ │ Method │             Path              │ Auth │               Notes               │                                                           │
+│ ├────────┼───────────────────────────────┼──────┼───────────────────────────────────┤                                                           │
+│ │ POST   │ /fs/upload-session            │ ✓    │ Create session from JSON manifest │                                                           │
+│ ├────────┼───────────────────────────────┼──────┼───────────────────────────────────┤                                                           │
+│ │ GET    │ /fs/upload-session/:upload_id │ ✓    │ Query status → received_chunks[]  │                                                           │
+│ ├────────┼───────────────────────────────┼──────┼───────────────────────────────────┤                                                           │
+│ │ POST   │ /fs/upload-chunk/:upload_id   │ ✓ S  │ Upload one chunk (streaming)      │                                                           │
+│ ├────────┼───────────────────────────────┼──────┼───────────────────────────────────┤                                                           │
+│ │ DELETE │ /fs/upload-session/:upload_id │ ✓    │ Abort and clean up temp files     │                                                           │
+│ └────────┴───────────────────────────────┴──────┴───────────────────────────────────┘                                                           │
+│                                                                                                                                                 │
+│ S = STREAM route (handler reads body from req->fd)                                                                                              │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ Manifest (sent as POST body to /fs/upload-session)                                                                                              │
+│                                                                                                                                                 │
+│ {                                                                                                                                               │
+│   "dest":         "./path/to/file.bin",                                                                                                         │
+│   "filename":     "file.bin",                                                                                                                   │
+│   "file_size":    104857600,                                                                                                                    │
+│   "chunk_size":   4194304,                                                                                                                      │
+│   "chunk_count":  25,                                                                                                                           │
+│   "chunk_hashes": ["abc123...", "def456...", ...]                                                                                               │
+│ }                                                                                                                                               │
+│                                                                                                                                                 │
+│ Rules enforced server-side:                                                                                                                     │
+│ - chunk_count == ceil(file_size / chunk_size)                                                                                                   │
+│ - Each hash exactly 64 hex characters (SHA-256)                                                                                                 │
+│ - chunk_size ≥ 4 KB, ≤ 256 MB                                                                                                                   │
+│ - chunk_count ≤ 65 536                                                                                                                          │
+│ - upload_id = 16 random hex chars from /dev/urandom                                                                                             │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ Temp Files (created in user home dir after privilege drop)                                                                                      │
+│                                                                                                                                                 │
+│ .tmp-upload-<upload_id>.meta   — JSON manifest (as-sent by client)                                                                              │
+│ .tmp-upload-<upload_id>.state  — binary bitset, (chunk_count+7)/8 bytes                                                                         │
+│ .tmp-upload-<upload_id>.data   — upload data, written via pwrite() at chunk offsets                                                             │
+│                                                                                                                                                 │
+│ On completion: .data renamed → dest; .meta and .state deleted.                                                                                  │
+│ On abort (DELETE): all three deleted.                                                                                                           │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ Files to Change                                                                                                                                 │
+│                                                                                                                                                 │
+│ ┌───────────────────────────┬─────────────────────────────────────────────────────────┐                                                         │
+│ │           File            │                      What changes                       │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ vendor/sha256.h (new)     │ SHA-256 context + API declarations                      │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ vendor/sha256.c (new)     │ SHA-256 implementation (auto-compiled by Makefile)      │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ lib/chttp.c               │ Add 409/422 status codes; add X-Chunk-Index to CORS     │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ src/fs/fs.h               │ Remove old 2 resumable decls; add 4 new handler decls   │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ src/fs/fs.c               │ Remove old resumable code; add 4 new handlers + helpers │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ src/main.c                │ Remove old 2 wrappers/registrations; add 4 new          │                                                         │
+│ ├───────────────────────────┼─────────────────────────────────────────────────────────┤                                                         │
+│ │ web/resumable-upload.html │ Rewrite UI for manifest-based chunked protocol          │                                                         │
+│ └───────────────────────────┴─────────────────────────────────────────────────────────┘                                                         │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ Detailed Changes                                                                                                                                │
+│                                                                                                                                                 │
+│ 1. vendor/sha256.h + vendor/sha256.c (new)                                                                                                      │
+│                                                                                                                                                 │
+│ Minimal public-domain SHA-256 (FIPS 180-4 transform):                                                                                           │
+│                                                                                                                                                 │
+│ /* sha256.h */                                                                                                                                  │
+│ #pragma once                                                                                                                                    │
+│ #include <stdint.h>                                                                                                                             │
+│ #include <stddef.h>                                                                                                                             │
+│                                                                                                                                                 │
+│ typedef struct {                                                                                                                                │
+│     uint8_t  data[64];                                                                                                                          │
+│     uint32_t datalen;                                                                                                                           │
+│     uint64_t bitlen;                                                                                                                            │
+│     uint32_t state[8];                                                                                                                          │
+│ } SHA256_CTX;                                                                                                                                   │
+│                                                                                                                                                 │
+│ void sha256_init  (SHA256_CTX *ctx);                                                                                                            │
+│ void sha256_update(SHA256_CTX *ctx, const uint8_t *data, size_t len);                                                                           │
+│ void sha256_final (SHA256_CTX *ctx, uint8_t hash[32]);                                                                                          │
+│                                                                                                                                                 │
+│ Convenience helper (static, in fs.c):                                                                                                           │
+│ static void sha256_to_hex(const uint8_t h[32], char out[65]) {                                                                                  │
+│     for (int i = 0; i < 32; i++) sprintf(out + i*2, "%02x", h[i]);                                                                              │
+│     out[64] = '\0';                                                                                                                             │
+│ }                                                                                                                                               │
+│                                                                                                                                                 │
+│ The Makefile already auto-compiles all *.c under vendor/ — no Makefile changes needed.                                                          │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ 2. lib/chttp.c                                                                                                                                  │
+│                                                                                                                                                 │
+│ status_text() — add two cases:                                                                                                                  │
+│ case 409: return "Conflict";                                                                                                                    │
+│ case 422: return "Unprocessable Entity";                                                                                                        │
+│                                                                                                                                                 │
+│ CORS headers in chttp_write_response — add X-Chunk-Index:                                                                                       │
+│ "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"                                                                         │
+│                                                                                                                                                 │
+│ OPTIONS preflight handler in connection_thread — same addition to Access-Control-Allow-Headers.                                                 │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ 3. src/fs/fs.h                                                                                                                                  │
+│                                                                                                                                                 │
+│ Remove:                                                                                                                                         │
+│ void handle_fs_stream_upload_resumable_impl(HttpRequest *, HttpResponse *);                                                                     │
+│ void handle_fs_upload_resumable_status_impl(HttpRequest *, HttpResponse *);                                                                     │
+│                                                                                                                                                 │
+│ Add:                                                                                                                                            │
+│ void handle_fs_upload_session_create_impl(HttpRequest *, HttpResponse *);                                                                       │
+│ void handle_fs_upload_session_status_impl(HttpRequest *, HttpResponse *);                                                                       │
+│ void handle_fs_upload_chunk_impl         (HttpRequest *, HttpResponse *);                                                                       │
+│ void handle_fs_upload_session_abort_impl (HttpRequest *, HttpResponse *);                                                                       │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ 4. src/fs/fs.c — new helpers and handlers                                                                                                       │
+│                                                                                                                                                 │
+│ Remove entirely:                                                                                                                                │
+│ - ResumableState struct                                                                                                                         │
+│ - resumable_state_path(), read_resumable_state(), write_resumable_state()                                                                       │
+│ - handle_fs_upload_resumable_status_impl()                                                                                                      │
+│ - handle_fs_stream_upload_resumable_impl()                                                                                                      │
+│ - #include "auth/auth.h" (was only needed for old session parsing — no longer needed)                                                           │
+│                                                                                                                                                 │
+│ Keep: send_upload_complete() — reused by new completion handler                                                                                 │
+│                                                                                                                                                 │
+│ Add #include "sha256.h"                                                                                                                         │
+│                                                                                                                                                 │
+│ New static helpers:                                                                                                                             │
+│                                                                                                                                                 │
+│ /* Validate upload_id: exactly 16 lowercase hex chars. Returns 0 ok, -1 bad. */                                                                 │
+│ static int validate_upload_id(const char *id);                                                                                                  │
+│                                                                                                                                                 │
+│ /* Build path for a temp file: .tmp-upload-<id>.<ext> in cwd. */                                                                                │
+│ static void upload_tmp_path(const char *id, const char *ext, char *out, size_t n);                                                              │
+│                                                                                                                                                 │
+│ /* Bitset helpers */                                                                                                                            │
+│ static void bitset_set    (uint8_t *bs, size_t i);                                                                                              │
+│ static int  bitset_get    (const uint8_t *bs, size_t i);                                                                                        │
+│ static int  bitset_all_set(const uint8_t *bs, size_t count);                                                                                    │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ handle_fs_upload_session_create_impl (normal buffered route):                                                                                   │
+│ 1. Parse JSON with cJSON_Parse(req->body)                                                                                                       │
+│ 2. Extract and validate: dest, filename, file_size, chunk_size, chunk_count, chunk_hashes                                                       │
+│ 3. Check chunk_count == (file_size + chunk_size - 1) / chunk_size                                                                               │
+│ 4. Validate each hash is 64 hex chars; validate chunk_size bounds; max chunk_count 65536                                                        │
+│ 5. safe_path() on dest; fail 400 if invalid                                                                                                     │
+│ 6. Generate upload_id: read 8 bytes from /dev/urandom, format as 16 hex chars                                                                   │
+│ 7. Retry if .meta already exists (collision); max 5 retries then 500                                                                            │
+│ 8. Write .tmp-upload-<id>.meta with fopen("wx") — JSON string via cJSON_PrintUnformatted                                                        │
+│ 9. Write .tmp-upload-<id>.state: (chunk_count+7)/8 zero bytes                                                                                   │
+│ 10. Create .tmp-upload-<id>.data: open(O_WRONLY|O_CREAT|O_EXCL), ftruncate(fd, file_size), close                                                │
+│ 11. Respond 201: {"upload_id":"<id>"}                                                                                                           │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ handle_fs_upload_session_status_impl (normal route):                                                                                            │
+│ 1. upload_id = chttp_path_param(req, "upload_id"); validate                                                                                     │
+│ 2. Read + parse .meta JSON; get chunk_count, filename, dest, file_size, chunk_size                                                              │
+│ 3. Read .state binary bitset                                                                                                                    │
+│ 4. Build cJSON array received_chunks[] from set bits                                                                                            │
+│ 5. Respond 200: {upload_id, filename, dest, file_size, chunk_size, chunk_count, received_chunks}                                                │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ handle_fs_upload_chunk_impl (STREAM route):                                                                                                     │
+│ 1. upload_id = chttp_path_param(req, "upload_id"); validate                                                                                     │
+│ 2. chunk_index from X-Chunk-Index header (strtoul); chunk_bytes from Content-Length                                                             │
+│ 3. Read .meta JSON → get chunk_count, chunk_size, chunk_hashes[chunk_index]                                                                     │
+│ 4. Validate: chunk_index < chunk_count, chunk_bytes ≤ chunk_size (last chunk may be smaller)                                                    │
+│ 5. Read .state; if bit already set → drain recv, return 200 {"status":"already_done","chunk":N}                                                 │
+│ 6. buf = malloc(chunk_bytes)                                                                                                                    │
+│ 7. Copy req->body (partial from raw_buf) into buf; recv-loop rest from req->fd                                                                  │
+│ — feed each segment to SHA256_CTX incrementally                                                                                                 │
+│ 8. sha256_final → hex string; compare to chunk_hashes[chunk_index]                                                                              │
+│ 9. If mismatch: free(buf), return 422 {"error":"hash_mismatch","chunk":N}                                                                       │
+│ 10. pwrite(data_fd, buf, chunk_bytes, (off_t)chunk_index * chunk_size); free(buf)                                                               │
+│ 11. Lock .state file with fcntl(F_SETLKW, F_WRLCK), set bit, rewrite bitset, unlock                                                             │
+│ 12. If bitset_all_set():                                                                                                                        │
+│   - rename(.data, dest), unlink(.meta), unlink(.state)                                                                                          │
+│   - send_upload_complete(res, dest)                                                                                                             │
+│ 13. Else: return 200 {"status":"ok","chunk":N}                                                                                                  │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ handle_fs_upload_session_abort_impl (normal route, DELETE):                                                                                     │
+│ 1. upload_id = chttp_path_param(req, "upload_id"); validate                                                                                     │
+│ 2. Build three paths; unlink all three (ignore ENOENT)                                                                                          │
+│ 3. Respond 204 No Content                                                                                                                       │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ 5. src/main.c                                                                                                                                   │
+│                                                                                                                                                 │
+│ Remove:                                                                                                                                         │
+│ DEFINE_AUTH_ROUTE(handle_fs_upload_resumable_status, handle_fs_upload_resumable_status_impl)                                                    │
+│ DEFINE_STREAM_AUTH_ROUTE(handle_fs_stream_upload_resumable, handle_fs_stream_upload_resumable_impl)                                             │
+│ // and their CHTTP_GET / CHTTP_STREAM_POST registrations                                                                                        │
+│                                                                                                                                                 │
+│ Add:                                                                                                                                            │
+│ DEFINE_AUTH_ROUTE(handle_fs_upload_session_create, handle_fs_upload_session_create_impl)                                                        │
+│ DEFINE_AUTH_ROUTE(handle_fs_upload_session_status, handle_fs_upload_session_status_impl)                                                        │
+│ DEFINE_STREAM_AUTH_ROUTE(handle_fs_upload_chunk,   handle_fs_upload_chunk_impl)                                                                 │
+│ DEFINE_AUTH_ROUTE(handle_fs_upload_session_abort,  handle_fs_upload_session_abort_impl)                                                         │
+│                                                                                                                                                 │
+│ CHTTP_POST(&srv,        "/fs/upload-session",            handle_fs_upload_session_create);                                                      │
+│ CHTTP_GET(&srv,         "/fs/upload-session/:upload_id", handle_fs_upload_session_status);                                                      │
+│ CHTTP_STREAM_POST(&srv, "/fs/upload-chunk/:upload_id",   handle_fs_upload_chunk);                                                               │
+│ CHTTP_DELETE(&srv,      "/fs/upload-session/:upload_id", handle_fs_upload_session_abort);                                                       │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ 6. web/resumable-upload.html — rewrite                                                                                                          │
+│                                                                                                                                                 │
+│ Client algorithm:                                                                                                                               │
+│ 1. User picks file + enters dest + picks chunk size (256KB / 1MB / 4MB / 16MB, default 4MB)                                                     │
+│ 2. "Hash & Upload":                                                                                                                             │
+│    a. Compute SHA-256 per chunk via crypto.subtle — show hashing progress bar                                                                   │
+│    b. POST /fs/upload-session → get upload_id; save to localStorage                                                                             │
+│    c. Upload all chunks in order                                                                                                                │
+│ 3. "Check & Resume":                                                                                                                            │
+│    a. Look up upload_id from localStorage (key = dest+filename+filesize)                                                                        │
+│    b. GET /fs/upload-session/:id → received_chunks[]                                                                                            │
+│    c. Recompute hashes for missing chunks only                                                                                                  │
+│    d. Upload missing chunks                                                                                                                     │
+│ 4. Upload loop:                                                                                                                                 │
+│    - fetch POST /fs/upload-chunk/:id with X-Chunk-Index, Content-Length headers                                                                 │
+│    - Body: file.slice(i*chunkSize, (i+1)*chunkSize)                                                                                             │
+│    - On 422 hash_mismatch: retry up to 10 times; then abort                                                                                     │
+│    - On network error: retry up to 10 times with exponential backoff                                                                            │
+│    - Update progress and chunk grid after each chunk                                                                                            │
+│ 5. On complete response: show success card                                                                                                      │
+│                                                                                                                                                 │
+│ UI elements:                                                                                                                                    │
+│ - File picker + dest path input + chunk size selector                                                                                           │
+│ - Two-phase progress: hashing bar (phase 1) + upload bar (phase 2)                                                                              │
+│ - Chunk grid: small squares, coloured grey/blue/green/red                                                                                       │
+│ - Speed + ETA stats during upload                                                                                                               │
+│ - Cancel (abort) button → calls DELETE /fs/upload-session/:id                                                                                   │
+│ - JSON response card                                                                                                                            │
+│                                                                                                                                                 │
+│ localStorage key: chttp2-upload-${dest}/${file.name}/${file.size}                                                                               │
+│ Value stored: { upload_id, chunk_size, chunk_hashes[] } so resume does not need to rehash                                                       │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ What Does NOT Change                                                                                                                            │
+│                                                                                                                                                 │
+│ - handle_fs_stream_upload_impl (simple non-resumable) — unchanged                                                                               │
+│ - All other /fs/* handlers — unchanged                                                                                                          │
+│ - send_upload_complete() — reused                                                                                                               │
+│ - safe_path(), safe_filename() in utils — reused                                                                                                │
+│ - fork_and_run, fork_and_stream, DEFINE_*_ROUTE macros — unchanged                                                                              │
+│                                                                                                                                                 │
+│ ---                                                                                                                                             │
+│ Verification                                                                                                                                    │
+│                                                                                                                                                 │
+│ make clean && make            # must be zero warnings                                                                                           │
+│                                                                                                                                                 │
+│ sudo ./dist/server &                                                                                                                            │
+│                                                                                                                                                 │
+│ # Create test file                                                                                                                              │
+│ dd if=/dev/urandom bs=1M count=20 of=/tmp/testfile.bin                                                                                          │
+│                                                                                                                                                 │
+│ # Login                                                                                                                                         │
+│ curl -c /tmp/c.txt -s -X POST http://localhost:8080/login \                                                                                     │
+│   -H 'Content-Type: application/json' \                                                                                                         │
+│   -d '{"username":"<user>","password":"<pass>"}'                                                                                                │
+│                                                                                                                                                 │
+│ # Use browser UI: open web/resumable-upload.html                                                                                                │
+│ # - Upload testfile.bin                                                                                                                         │
+│ # - Mid-upload: cancel; reload page; Check & Resume                                                                                             │
+│ # - Verify: sha256sum of final file matches original                                                                                            │
+│                                                                                                                                                 │
+│ kill %1                                                                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

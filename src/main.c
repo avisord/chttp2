@@ -24,6 +24,10 @@ DEFINE_AUTH_ROUTE(handle_fs_stat,        handle_fs_stat_impl)
 DEFINE_AUTH_ROUTE(handle_fs_read,          handle_fs_read_impl)
 DEFINE_AUTH_ROUTE(handle_fs_write,         handle_fs_write_impl)
 DEFINE_STREAM_AUTH_ROUTE(handle_fs_stream_upload, handle_fs_stream_upload_impl)
+DEFINE_AUTH_ROUTE(handle_fs_upload_session_create, handle_fs_upload_session_create_impl)
+DEFINE_AUTH_ROUTE(handle_fs_upload_session_status, handle_fs_upload_session_status_impl)
+DEFINE_STREAM_AUTH_ROUTE(handle_fs_upload_chunk,   handle_fs_upload_chunk_impl)
+DEFINE_AUTH_ROUTE(handle_fs_upload_session_abort,  handle_fs_upload_session_abort_impl)
 
 int main(void) {
   if (getuid() != 0) {
@@ -68,7 +72,11 @@ int main(void) {
   CHTTP_GET(&srv,    "/fs/stat",     handle_fs_stat);
   CHTTP_GET(&srv,    "/fs/content",       handle_fs_read);
   CHTTP_PUT(&srv,    "/fs/content",       handle_fs_write);
-  CHTTP_STREAM_POST(&srv, "/fs/upload-stream", handle_fs_stream_upload);
+  CHTTP_STREAM_POST(&srv, "/fs/upload-stream",                 handle_fs_stream_upload);
+  CHTTP_POST(&srv,        "/fs/upload-session",               handle_fs_upload_session_create);
+  CHTTP_GET(&srv,         "/fs/upload-session/:upload_id",    handle_fs_upload_session_status);
+  CHTTP_STREAM_POST(&srv, "/fs/upload-chunk/:upload_id",      handle_fs_upload_chunk);
+  CHTTP_DELETE(&srv,      "/fs/upload-session/:upload_id",    handle_fs_upload_session_abort);
 
   chttp_server_run(&srv);
 

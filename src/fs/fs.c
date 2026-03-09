@@ -1,5 +1,6 @@
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 
 #include "cJSON.h"
 #include "fs.h"
+#include "sha256.h"
 #include "utils/utils.h"
 
 #define FS_CONTENT_MAX (64 * 1024)
@@ -521,4 +523,548 @@ void handle_fs_write_impl(HttpRequest *req, HttpResponse *res) {
            "{\"message\":\"saved\",\"path\":\"%s\",\"size\":%zu}",
            path, written);
   chttp_send_json(res, buf);
+}
+
+/* ── Chunked manifest-based resumable upload ─────────────────────────────────
+ *
+ * Temp files in user's cwd (after privilege drop):
+ *   .tmp-upload-<id>.meta   JSON manifest
+ *   .tmp-upload-<id>.state  binary bitset  (chunk_count+7)/8 bytes
+ *   .tmp-upload-<id>.data   preallocated file written via pwrite()
+ *
+ * On completion: .data renamed to dest; .meta and .state deleted.
+ * On abort (DELETE): all three unlinked.
+ * ──────────────────────────────────────────────────────────────────────────*/
+
+/* Convert SHA-256 raw bytes to 64-char lowercase hex string. */
+static void sha256_to_hex(const uint8_t h[32], char out[65]) {
+  for (int i = 0; i < 32; i++) sprintf(out + i*2, "%02x", h[i]);
+  out[64] = '\0';
+}
+
+/* Validate upload_id: exactly 16 lowercase hex chars. Returns 0 ok, -1 bad. */
+static int validate_upload_id(const char *id) {
+  if (!id) return -1;
+  for (int i = 0; i < 16; i++) {
+    char c = id[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return -1;
+  }
+  return id[16] == '\0' ? 0 : -1;
+}
+
+/* Build .tmp-upload-<id>.<ext> path in cwd. */
+static void upload_tmp_path(const char *id, const char *ext,
+                             char *out, size_t n) {
+  snprintf(out, n, ".tmp-upload-%s.%s", id, ext);
+}
+
+/* Bitset helpers */
+static void bitset_set(uint8_t *bs, size_t i) {
+  bs[i / 8] |= (uint8_t)(1u << (i % 8));
+}
+static int bitset_get(const uint8_t *bs, size_t i) {
+  return (bs[i / 8] >> (i % 8)) & 1;
+}
+static int bitset_all_set(const uint8_t *bs, size_t count) {
+  size_t full = count / 8;
+  for (size_t i = 0; i < full; i++)
+    if (bs[i] != 0xff) return 0;
+  size_t rem = count % 8;
+  if (rem) {
+    uint8_t mask = (uint8_t)((1u << rem) - 1);
+    if ((bs[full] & mask) != mask) return 0;
+  }
+  return 1;
+}
+
+/* Shared tail: stat the completed file and send 201 JSON. */
+static void send_upload_complete(HttpResponse *res, const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0) { fs_error(res, errno); return; }
+  char mtime[32];
+  strftime(mtime, sizeof(mtime), "%Y-%m-%dT%H:%M:%SZ", gmtime(&st.st_mtime));
+  const char *slash = strrchr(path, '/');
+  const char *base  = slash ? slash + 1 : path;
+  cJSON *obj = cJSON_CreateObject();
+  cJSON_AddStringToObject(obj, "path",        path);
+  cJSON_AddStringToObject(obj, "filename",    base);
+  cJSON_AddNumberToObject(obj, "size_bytes",  (double)st.st_size);
+  cJSON_AddStringToObject(obj, "modified_at", mtime);
+  chttp_set_status(res, 201);
+  chttp_send_cjson(res, obj);
+  cJSON_Delete(obj);
+}
+
+/* POST /fs/upload-session — create session from JSON manifest */
+void handle_fs_upload_session_create_impl(HttpRequest *req, HttpResponse *res) {
+  if (!req->body || req->body_len == 0) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Body required\"}");
+    return;
+  }
+
+  cJSON *json = cJSON_ParseWithLength(req->body, req->body_len);
+  if (!json) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+
+  cJSON *j_dest        = cJSON_GetObjectItem(json, "dest");
+  cJSON *j_filename    = cJSON_GetObjectItem(json, "filename");
+  cJSON *j_file_size   = cJSON_GetObjectItem(json, "file_size");
+  cJSON *j_chunk_size  = cJSON_GetObjectItem(json, "chunk_size");
+  cJSON *j_chunk_count = cJSON_GetObjectItem(json, "chunk_count");
+  cJSON *j_hashes      = cJSON_GetObjectItem(json, "chunk_hashes");
+
+  if (!cJSON_IsString(j_dest) || !cJSON_IsString(j_filename) ||
+      !cJSON_IsNumber(j_file_size) || !cJSON_IsNumber(j_chunk_size) ||
+      !cJSON_IsNumber(j_chunk_count) || !cJSON_IsArray(j_hashes)) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Missing or invalid manifest fields\"}");
+    return;
+  }
+
+  size_t file_size   = (size_t)j_file_size->valuedouble;
+  size_t chunk_size  = (size_t)j_chunk_size->valuedouble;
+  size_t chunk_count = (size_t)j_chunk_count->valuedouble;
+
+  /* Validate chunk_size bounds */
+  if (chunk_size < 4096 || chunk_size > 256 * 1024 * 1024) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk_size out of range (4KB..256MB)\"}");
+    return;
+  }
+  /* Validate chunk_count */
+  if (chunk_count == 0 || chunk_count > 65536) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk_count out of range (1..65536)\"}");
+    return;
+  }
+  /* Validate chunk_count == ceil(file_size / chunk_size) */
+  size_t expected = (file_size + chunk_size - 1) / chunk_size;
+  if (chunk_count != expected) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk_count does not match ceil(file_size/chunk_size)\"}");
+    return;
+  }
+  /* Validate hash array length */
+  if ((size_t)cJSON_GetArraySize(j_hashes) != chunk_count) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk_hashes length != chunk_count\"}");
+    return;
+  }
+  /* Validate each hash is 64 lowercase hex chars */
+  for (int i = 0; i < (int)chunk_count; i++) {
+    cJSON *h = cJSON_GetArrayItem(j_hashes, i);
+    if (!cJSON_IsString(h) || strlen(h->valuestring) != 64) {
+      cJSON_Delete(json);
+      chttp_set_status(res, 400);
+      chttp_send_json(res, "{\"error\":\"Each chunk hash must be 64 hex characters\"}");
+      return;
+    }
+    for (int k = 0; k < 64; k++) {
+      char c = h->valuestring[k];
+      if (!((c>='0'&&c<='9')||(c>='a'&&c<='f'))) {
+        cJSON_Delete(json);
+        chttp_set_status(res, 400);
+        chttp_send_json(res, "{\"error\":\"Chunk hash must be lowercase hex\"}");
+        return;
+      }
+    }
+  }
+  /* Validate dest path */
+  if (!safe_path(j_dest->valuestring)) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid dest path\"}");
+    return;
+  }
+
+  /* Generate upload_id: 8 random bytes → 16 hex chars */
+  char upload_id[17];
+  char meta_path[64], state_path[64], data_path[64];
+  int attempts = 0;
+  int meta_fd = -1;
+
+  while (attempts++ < 5) {
+    uint8_t rnd[8];
+    int urnd = open("/dev/urandom", O_RDONLY);
+    if (urnd < 0) { cJSON_Delete(json); fs_error(res, errno); return; }
+    if (read(urnd, rnd, 8) != 8) {
+      close(urnd); cJSON_Delete(json);
+      chttp_set_status(res, 500);
+      chttp_send_json(res, "{\"error\":\"Failed to read random bytes\"}");
+      return;
+    }
+    close(urnd);
+    for (int i = 0; i < 8; i++) sprintf(upload_id + i*2, "%02x", rnd[i]);
+    upload_id[16] = '\0';
+
+    upload_tmp_path(upload_id, "meta", meta_path, sizeof(meta_path));
+    meta_fd = open(meta_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (meta_fd >= 0) break;
+    if (errno != EEXIST) {
+      cJSON_Delete(json);
+      fs_error(res, errno);
+      return;
+    }
+  }
+  if (meta_fd < 0) {
+    cJSON_Delete(json);
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Failed to generate unique upload_id\"}");
+    return;
+  }
+
+  /* Write .meta file */
+  char *meta_str = cJSON_PrintUnformatted(json);
+  if (!meta_str || write(meta_fd, meta_str, strlen(meta_str)) < 0) {
+    int e = errno;
+    close(meta_fd); unlink(meta_path);
+    free(meta_str); cJSON_Delete(json);
+    fs_error(res, e);
+    return;
+  }
+  free(meta_str);
+  close(meta_fd);
+  cJSON_Delete(json);
+
+  /* Write .state file: (chunk_count+7)/8 zero bytes */
+  upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
+  size_t state_bytes = (chunk_count + 7) / 8;
+  int sfd = open(state_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (sfd < 0) {
+    unlink(meta_path); fs_error(res, errno); return;
+  }
+  {
+    uint8_t zero = 0;
+    for (size_t i = 0; i < state_bytes; i++) write(sfd, &zero, 1);
+  }
+  close(sfd);
+
+  /* Create .data file: preallocate file_size bytes */
+  upload_tmp_path(upload_id, "data", data_path, sizeof(data_path));
+  int dfd = open(data_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (dfd < 0) {
+    unlink(meta_path); unlink(state_path); fs_error(res, errno); return;
+  }
+  if (ftruncate(dfd, (off_t)file_size) != 0) {
+    int e = errno;
+    close(dfd); unlink(meta_path); unlink(state_path); unlink(data_path);
+    fs_error(res, e);
+    return;
+  }
+  close(dfd);
+
+  char resp[64];
+  snprintf(resp, sizeof(resp), "{\"upload_id\":\"%s\"}", upload_id);
+  chttp_set_status(res, 201);
+  chttp_send_json(res, resp);
+}
+
+/* GET /fs/upload-session/:upload_id — query status */
+void handle_fs_upload_session_status_impl(HttpRequest *req, HttpResponse *res) {
+  const char *upload_id = chttp_path_param(req, "upload_id");
+  if (validate_upload_id(upload_id) != 0) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid upload_id\"}");
+    return;
+  }
+
+  char meta_path[64], state_path[64];
+  upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
+  upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
+
+  /* Read meta */
+  FILE *mf = fopen(meta_path, "r");
+  if (!mf) {
+    chttp_set_status(res, 404);
+    chttp_send_json(res, "{\"error\":\"Upload session not found\"}");
+    return;
+  }
+  fseek(mf, 0, SEEK_END);
+  long msz = ftell(mf);
+  fseek(mf, 0, SEEK_SET);
+  char *mbuf = malloc((size_t)msz + 1);
+  if (!mbuf) { fclose(mf); chttp_set_status(res, 500); chttp_send_json(res, "{\"error\":\"OOM\"}"); return; }
+  fread(mbuf, 1, (size_t)msz, mf);
+  fclose(mf);
+  mbuf[msz] = '\0';
+
+  cJSON *meta = cJSON_Parse(mbuf);
+  free(mbuf);
+  if (!meta) {
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Corrupt meta file\"}");
+    return;
+  }
+
+  size_t chunk_count = (size_t)cJSON_GetObjectItem(meta, "chunk_count")->valuedouble;
+
+  /* Read state bitset */
+  size_t state_bytes = (chunk_count + 7) / 8;
+  uint8_t *bs = calloc(state_bytes, 1);
+  if (!bs) { cJSON_Delete(meta); chttp_set_status(res, 500); chttp_send_json(res, "{\"error\":\"OOM\"}"); return; }
+
+  FILE *sf = fopen(state_path, "rb");
+  if (sf) {
+    fread(bs, 1, state_bytes, sf);
+    fclose(sf);
+  }
+
+  cJSON *obj = cJSON_CreateObject();
+  cJSON_AddStringToObject(obj, "upload_id",   upload_id);
+  cJSON_AddItemToObject(obj,   "filename",    cJSON_Duplicate(cJSON_GetObjectItem(meta, "filename"), 0));
+  cJSON_AddItemToObject(obj,   "dest",        cJSON_Duplicate(cJSON_GetObjectItem(meta, "dest"), 0));
+  cJSON_AddItemToObject(obj,   "file_size",   cJSON_Duplicate(cJSON_GetObjectItem(meta, "file_size"), 0));
+  cJSON_AddItemToObject(obj,   "chunk_size",  cJSON_Duplicate(cJSON_GetObjectItem(meta, "chunk_size"), 0));
+  cJSON_AddItemToObject(obj,   "chunk_count", cJSON_Duplicate(cJSON_GetObjectItem(meta, "chunk_count"), 0));
+
+  cJSON *recv_arr = cJSON_AddArrayToObject(obj, "received_chunks");
+  for (size_t i = 0; i < chunk_count; i++) {
+    if (bitset_get(bs, i))
+      cJSON_AddItemToArray(recv_arr, cJSON_CreateNumber((double)i));
+  }
+  free(bs);
+  cJSON_Delete(meta);
+
+  chttp_send_cjson(res, obj);
+  cJSON_Delete(obj);
+}
+
+/* POST /fs/upload-chunk/:upload_id — stream one chunk (STREAM route) */
+void handle_fs_upload_chunk_impl(HttpRequest *req, HttpResponse *res) {
+  const char *upload_id = chttp_path_param(req, "upload_id");
+  if (validate_upload_id(upload_id) != 0) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid upload_id\"}");
+    return;
+  }
+
+  const char *idx_str = chttp_header(req, "X-Chunk-Index");
+  const char *cl_str  = chttp_header(req, "Content-Length");
+  if (!idx_str || !cl_str) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"X-Chunk-Index and Content-Length required\"}");
+    return;
+  }
+
+  size_t chunk_index = (size_t)strtoul(idx_str, NULL, 10);
+  size_t chunk_bytes = (size_t)strtoull(cl_str, NULL, 10);
+
+  char meta_path[64], state_path[64], data_path[64];
+  upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
+  upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
+  upload_tmp_path(upload_id, "data",  data_path,  sizeof(data_path));
+
+  /* Read meta */
+  FILE *mf = fopen(meta_path, "r");
+  if (!mf) {
+    chttp_set_status(res, 404);
+    chttp_send_json(res, "{\"error\":\"Upload session not found\"}");
+    return;
+  }
+  fseek(mf, 0, SEEK_END);
+  long msz = ftell(mf);
+  fseek(mf, 0, SEEK_SET);
+  char *mbuf = malloc((size_t)msz + 1);
+  if (!mbuf) { fclose(mf); chttp_set_status(res, 500); chttp_send_json(res, "{\"error\":\"OOM\"}"); return; }
+  fread(mbuf, 1, (size_t)msz, mf);
+  fclose(mf);
+  mbuf[msz] = '\0';
+
+  cJSON *meta = cJSON_Parse(mbuf);
+  free(mbuf);
+  if (!meta) {
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Corrupt meta file\"}");
+    return;
+  }
+
+  size_t chunk_count = (size_t)cJSON_GetObjectItem(meta, "chunk_count")->valuedouble;
+  size_t chunk_size  = (size_t)cJSON_GetObjectItem(meta, "chunk_size")->valuedouble;
+  cJSON *j_hashes    = cJSON_GetObjectItem(meta, "chunk_hashes");
+
+  if (chunk_index >= chunk_count) {
+    cJSON_Delete(meta);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk_index out of range\"}");
+    return;
+  }
+  if (chunk_bytes > chunk_size) {
+    cJSON_Delete(meta);
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"chunk too large\"}");
+    return;
+  }
+
+  const char *expected_hash = cJSON_GetArrayItem(j_hashes, (int)chunk_index)->valuestring;
+
+  /* Read state bitset */
+  size_t state_bytes = (chunk_count + 7) / 8;
+  uint8_t *bs = calloc(state_bytes, 1);
+  if (!bs) { cJSON_Delete(meta); chttp_set_status(res, 500); chttp_send_json(res, "{\"error\":\"OOM\"}"); return; }
+
+  int sfd = open(state_path, O_RDWR);
+  if (sfd < 0) {
+    free(bs); cJSON_Delete(meta); fs_error(res, errno); return;
+  }
+  read(sfd, bs, state_bytes);
+
+  /* Already received? */
+  if (bitset_get(bs, chunk_index)) {
+    close(sfd);
+    free(bs);
+    cJSON_Delete(meta);
+    /* Drain incoming body */
+    char drain[4096];
+    size_t drained = req->body_len; /* already in buffer */
+    while (drained < chunk_bytes) {
+      size_t want = sizeof(drain);
+      if (chunk_bytes - drained < want) want = chunk_bytes - drained;
+      int r = recv(req->fd, drain, want, 0);
+      if (r <= 0) break;
+      drained += (size_t)r;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"status\":\"already_done\",\"chunk\":%zu}", chunk_index);
+    chttp_send_json(res, buf);
+    return;
+  }
+  close(sfd);
+
+  /* Allocate buffer and read chunk */
+  uint8_t *buf = malloc(chunk_bytes);
+  if (!buf) {
+    free(bs); cJSON_Delete(meta);
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"OOM\"}");
+    return;
+  }
+
+  SHA256_CTX sha;
+  sha256_init(&sha);
+
+  size_t received = 0;
+
+  /* Copy partial body already buffered with headers */
+  if (req->body && req->body_len > 0) {
+    size_t take = req->body_len < chunk_bytes ? req->body_len : chunk_bytes;
+    memcpy(buf, req->body, take);
+    sha256_update(&sha, (const uint8_t *)req->body, take);
+    received = take;
+  }
+
+  /* Recv remaining bytes from socket */
+  while (received < chunk_bytes) {
+    size_t want = chunk_bytes - received;
+    int r = recv(req->fd, (char *)buf + received, want, 0);
+    if (r <= 0) {
+      free(buf); free(bs); cJSON_Delete(meta);
+      chttp_set_status(res, 400);
+      chttp_send_json(res, "{\"error\":\"Upload interrupted\"}");
+      return;
+    }
+    sha256_update(&sha, (const uint8_t *)buf + received, (size_t)r);
+    received += (size_t)r;
+  }
+
+  /* Verify SHA-256 */
+  uint8_t hash_bytes[32];
+  sha256_final(&sha, hash_bytes);
+  char hash_hex[65];
+  sha256_to_hex(hash_bytes, hash_hex);
+
+  if (strcmp(hash_hex, expected_hash) != 0) {
+    free(buf); free(bs); cJSON_Delete(meta);
+    char errbuf[128];
+    snprintf(errbuf, sizeof(errbuf),
+             "{\"error\":\"hash_mismatch\",\"chunk\":%zu}", chunk_index);
+    chttp_set_status(res, 422);
+    chttp_send_json(res, errbuf);
+    return;
+  }
+
+  /* Write chunk to .data via pwrite */
+  int dfd = open(data_path, O_WRONLY);
+  if (dfd < 0) {
+    free(buf); free(bs); cJSON_Delete(meta); fs_error(res, errno); return;
+  }
+  off_t offset = (off_t)(chunk_index * chunk_size);
+  ssize_t written = pwrite(dfd, buf, chunk_bytes, offset);
+  close(dfd);
+  free(buf);
+
+  if (written < 0 || (size_t)written != chunk_bytes) {
+    free(bs); cJSON_Delete(meta); fs_error(res, errno); return;
+  }
+
+  /* Update bitset with file lock */
+  sfd = open(state_path, O_RDWR);
+  if (sfd < 0) { free(bs); cJSON_Delete(meta); fs_error(res, errno); return; }
+
+  struct flock fl;
+  memset(&fl, 0, sizeof(fl));
+  fl.l_type   = F_WRLCK;
+  fl.l_whence = SEEK_SET;
+  fcntl(sfd, F_SETLKW, &fl);
+
+  /* Re-read under lock */
+  pread(sfd, bs, state_bytes, 0);
+  bitset_set(bs, chunk_index);
+  pwrite(sfd, bs, state_bytes, 0);
+
+  fl.l_type = F_UNLCK;
+  fcntl(sfd, F_SETLK, &fl);
+  close(sfd);
+
+  int all_done = bitset_all_set(bs, chunk_count);
+  free(bs);
+
+  /* Grab dest before freeing meta */
+  char dest_buf[512];
+  strncpy(dest_buf, cJSON_GetObjectItem(meta, "dest")->valuestring, sizeof(dest_buf) - 1);
+  dest_buf[sizeof(dest_buf) - 1] = '\0';
+  cJSON_Delete(meta);
+
+  if (all_done) {
+    /* Rename .data to final dest, clean up .meta and .state */
+    if (rename(data_path, dest_buf) != 0) { fs_error(res, errno); return; }
+    unlink(meta_path);
+    unlink(state_path);
+    send_upload_complete(res, dest_buf);
+    return;
+  }
+
+  char okbuf[64];
+  snprintf(okbuf, sizeof(okbuf), "{\"status\":\"ok\",\"chunk\":%zu}", chunk_index);
+  chttp_send_json(res, okbuf);
+}
+
+/* DELETE /fs/upload-session/:upload_id — abort and clean up */
+void handle_fs_upload_session_abort_impl(HttpRequest *req, HttpResponse *res) {
+  const char *upload_id = chttp_path_param(req, "upload_id");
+  if (validate_upload_id(upload_id) != 0) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid upload_id\"}");
+    return;
+  }
+
+  char meta_path[64], state_path[64], data_path[64];
+  upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
+  upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
+  upload_tmp_path(upload_id, "data",  data_path,  sizeof(data_path));
+
+  unlink(meta_path);
+  unlink(state_path);
+  unlink(data_path);
+
+  chttp_set_status(res, 204);
+  chttp_send_json(res, "");
 }

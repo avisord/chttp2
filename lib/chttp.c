@@ -580,8 +580,10 @@ static const char *status_text(int code) {
         case 403: return "Forbidden";
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
+        case 409: return "Conflict";
         case 411: return "Length Required";
         case 413: return "Content Too Large";
+        case 422: return "Unprocessable Entity";
         case 500: return "Internal Server Error";
         default:  return "Unknown";
     }
@@ -643,7 +645,7 @@ int chttp_write_response(int fd, HttpResponse *res) {
                   "Access-Control-Allow-Origin: http://localhost:8081\r\n"
                   "Access-Control-Allow-Credentials: true\r\n"
                   "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
-                  "Access-Control-Allow-Headers: Content-Type, Cookie\r\n");
+                  "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n");
 
     n += snprintf(hbuf + n, sizeof(hbuf) - n,
                   "Content-Length: %zu\r\n\r\n", res->body_len);
@@ -694,7 +696,7 @@ static void *connection_thread(void *arg) {
             "Access-Control-Allow-Origin: http://localhost:8081\r\n"
             "Access-Control-Allow-Credentials: true\r\n"
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
-            "Access-Control-Allow-Headers: Content-Type, Cookie\r\n"
+            "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
             "Access-Control-Max-Age: 86400\r\n"
             "Content-Length: 0\r\n\r\n";
         write(fd, pre, strlen(pre));
