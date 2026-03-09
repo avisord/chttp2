@@ -27,7 +27,32 @@ for ui:
    - multiple files can be selected
 
 
+---
 
 
+  Queue behaviour
+  - Files are added via drop or file picker (multiple at once)
+  - Processed strictly in order — first-in, first-out
+  - New files added while uploading are automatically picked up
+
+  Per-file states
+  - Pending → grey dot, waiting
+  - Hashing X/Y chunks… → blue pulsing dot + blue progress bar
+  - XX% · 2.1 MB/s · ETA 12s → indigo pulsing dot + purple progress bar
+  - ✓ Complete → green dot, bar at 100%, row dims
+  - ✕ Error: ... → red dot, error message inline
+  - Aborted → dark dot, row dims out
+
+  Resume logic (checked before every upload, no re-hash):
+  1. Check localStorage for saved upload_id + chunk_hashes
+  2. If found → GET /fs/upload-session/:id → get received_chunks[] → upload only missing
+  3. If not found or session expired → hash all chunks → POST /fs/upload-session → upload all
+
+  Controls
+  - Upload button — starts the queue (disabled while running or no pending items)
+  - Pause button — pauses between chunks (toggles to Resume, orange tint); active item finishes its current chunk first
+  - ✕ Abort per file — immediately aborts active upload, calls DELETE /fs/upload-session/:id, clears localStorage, removes from queue; for
+  complete/error items it just removes the row
+  - Dest prefix input (default chttp2/) — auto mkdir -p before first upload to that prefix
 
 

@@ -1,0 +1,31 @@
+❯ can we accelerate a single file upload with sending multiple chunks at a time from client (just asking do not implement)
+
+● Yes, but it comes with trade-offs worth understanding:
+
+  What changes client-side
+  Instead of for (const ci of missingChunks) sequential, you'd do batches — e.g. 4 concurrent fetch() calls via Promise.all or a semaphore pool.
+
+  What changes server-side
+  The current server already supports concurrent chunk uploads correctly — pwrite() at independent offsets, fcntl write-lock only on the bitset,
+  and the .data file is preallocated so no seeking races. So the server needs no changes for correctness.
+
+  Where the speedup actually comes from
+  - Hides per-chunk round-trip latency (especially useful on high-latency links)
+  - Keeps the server busy during the gap between client finishing a chunk read + hash verification and starting the next recv()
+  - On a local LAN or loopback this gives near-zero benefit since RTT ≈ 0
+
+  Real risks
+  - Memory pressure: with 4 MB chunks and 4 concurrent uploads, the client holds ~16 MB of ArrayBuffers in flight at once (plus the browser's fetch
+   buffers). With 16 MB chunks that becomes 64 MB
+  - TCP congestion: multiple concurrent streams compete with each other on the same connection pool — you may not get 4× throughput, you may just
+  fragment the available bandwidth
+  - Out-of-order completion reporting: the progress bar becomes harder to track — chunk 5 can complete before chunk 3, so you can't just increment
+  a counter linearly
+  - ETA accuracy drops: speed estimate based on wall time becomes noisy when multiple chunks overlap
+
+  Practical recommendation
+  Concurrency of 2–4 is usually the sweet spot for WAN uploads. Beyond 4, you hit diminishing returns and the memory cost starts mattering. For a
+  LAN NAS (which is what this server is), sequential at 4 MB chunks already saturates a gigabit link — the bottleneck is disk write speed, not
+  network latency.
+
+
