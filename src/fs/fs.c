@@ -686,6 +686,32 @@ void handle_fs_upload_session_create_impl(HttpRequest *req, HttpResponse *res) {
     return;
   }
 
+  /* Check that the destination directory is writable by this user.
+   * This runs inside fork_and_run() after privilege drop, so access()
+   * reflects the authenticated user's real permissions — not root's.
+   * Catching this here avoids uploading gigabytes only to fail at rename. */
+  {
+    char dest_copy[512];
+    strncpy(dest_copy, j_dest->valuestring, sizeof(dest_copy) - 1);
+    dest_copy[sizeof(dest_copy) - 1] = '\0';
+
+    char *slash = strrchr(dest_copy, '/');
+    const char *dest_dir;
+    if (slash) {
+      *slash = '\0';
+      dest_dir = dest_copy[0] != '\0' ? dest_copy : "/";
+    } else {
+      dest_dir = ".";
+    }
+
+    if (access(dest_dir, W_OK | X_OK) != 0) {
+      int e = errno;
+      cJSON_Delete(json);
+      fs_error(res, e);
+      return;
+    }
+  }
+
   /* Generate upload_id: 8 random bytes → 16 hex chars */
   char upload_id[17];
   char meta_path[64], state_path[64], data_path[64];
