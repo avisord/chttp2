@@ -1,0 +1,33 @@
+great to see all working, 
+now create a new ui to upload multiple files at once, 
+
+we need to show:
+
+- status: pending, hasing, uploading, complete
+- file name
+- file size
+- eta
+- upload progress
+
+keep in mind everyting will be sequential like a queue
+first file will be uploaded first
+
+no need to show chunk size selection, by default the path will be chttp2/<filname>
+
+only show one uplaod button
+and for every new upload check for avaialble sessions 
+  - if not found: start a new uplaod sessiong by creating hashes ...
+  - if found: resume upload
+
+we should also have a pause button to pause the uplaod (single button to pause all uploads)
+also an abort button to abort the upload (for each upload)
+
+for ui:
+   - accept drop of files
+   - multiple files can be selected
+
+
+
+
+
+

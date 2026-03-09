@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upload Queue</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117; color: #e2e8f0;
+      min-height: 100vh; padding: 40px 16px;
+    }
+
+    .app { max-width: 680px; margin: 0 auto; }
+
+    h1 { font-size: 1.3rem; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; }
+    .sub { font-size: 0.8rem; color: #64748b; margin-bottom: 28px; }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2px dashed #2d3148; border-radius: 12px;
+      padding: 28px 24px; text-align: center; cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative; margin-bottom: 18px;
+    }
+    .drop-zone.over { border-color: #818cf8; background: rgba(129,140,248,.05); }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+      width: 100%; height: 100%;
+    }
+    .dz-icon { font-size: 1.8rem; margin-bottom: 6px; }
+    .dz-main { font-size: 0.88rem; color: #94a3b8; margin-bottom: 4px; }
+    .dz-count { font-size: 0.78rem; color: #818cf8; font-weight: 500; min-height: 1.2em; }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 22px;
+    }
+    .dest-wrap {
+      flex: 1; display: flex; align-items: center; gap: 6px;
+      background: #12141e; border: 1px solid #2d3148; border-radius: 7px;
+      padding: 7px 10px; min-width: 0;
+    }
+    .dest-wrap label { font-size: 0.75rem; color: #475569; white-space: nowrap; }
+    .dest-wrap input {
+      flex: 1; background: none; border: none; outline: none;
+      color: #e2e8f0; font-size: 0.87rem; min-width: 0;
+    }
+    button {
+      padding: 8px 18px; border-radius: 7px; border: none; cursor: pointer;
+      font-size: 0.85rem; font-weight: 500; white-space: nowrap;
+      transition: background .15s, opacity .15s;
+    }
+    button:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-upload { background: #4f46e5; color: #fff; }
+    .btn-upload:not(:disabled):hover { background: #4338ca; }
+    .btn-pause  {
+      background: #1e2130; color: #94a3b8; border: 1px solid #2d3148;
+    }
+    .btn-pause:not(:disabled):hover { border-color: #818cf8; color: #e2e8f0; }
+    .btn-pause.paused { background: #451a0320; color: #f59e0b; border-color: #f59e0b66; }
+
+    /* ── Queue section ── */
+    .section-label {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: .07em;
+      text-transform: uppercase; color: #374151;
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .section-label .count { color: #4b5563; font-weight: 500; letter-spacing: 0; }
+
+    .queue-empty {
+      text-align: center; padding: 28px 0;
+      font-size: 0.83rem; color: #374151;
+    }
+
+    /* ── Queue item ── */
+    .q-item {
+      background: #1a1d27; border: 1px solid #252837;
+      border-radius: 10px; padding: 13px 14px; margin-bottom: 8px;
+      transition: border-color .2s, opacity .2s;
+    }
+    .q-item.active  { border-color: #4f46e540; }
+    .q-item.done    { opacity: .65; }
+    .q-item.gone    { opacity: .4; }
+
+    /* Row 1: dot + name + size + abort */
+    .q-row1 {
+      display: flex; align-items: center; gap: 9px;
+    }
+
+    /* Status dot */
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      transition: background .3s;
+    }
+    .dot-pending   { background: #374151; }
+    .dot-hashing   { background: #3b82f6; animation: blink 1.1s ease-in-out infinite; }
+    .dot-uploading { background: #818cf8; animation: blink 1.1s ease-in-out infinite; }
+    .dot-complete  { background: #22c55e; }
+    .dot-error     { background: #ef4444; }
+    .dot-aborted   { background: #1f2937; }
+
+    @keyframes blink {
+      0%,100% { opacity:1; transform:scale(1);   }
+      50%      { opacity:.5; transform:scale(1.35); }
+    }
+
+    .q-name {
+      flex: 1; font-size: 0.88rem; font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+      color: #e2e8f0;
+    }
+    .q-size {
+      font-size: 0.76rem; color: #4b5563; white-space: nowrap;
+    }
+    .q-abort {
+      padding: 3px 8px; border-radius: 4px;
+      background: none; border: 1px solid #252837; color: #374151;
+      font-size: 0.72rem; cursor: pointer; flex-shrink: 0;
+      transition: color .15s, border-color .15s;
+    }
+    .q-abort:hover { color: #ef4444; border-color: #ef444455; }
+
+    /* Row 2: dest + status text */
+    .q-dest {
+      font-size: 0.71rem; color: #374151; padding-left: 17px;
+      margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .q-status {
+      font-size: 0.75rem; padding-left: 17px; margin-top: 3px;
+      min-height: 1.1em;
+    }
+    .q-status.st-pending   { color: #374151; }
+    .q-status.st-hashing   { color: #3b82f6; }
+    .q-status.st-uploading { color: #94a3b8; }
+    .q-status.st-complete  { color: #22c55e; }
+    .q-status.st-error     { color: #ef4444; }
+    .q-status.st-aborted   { color: #374151; }
+
+    /* Progress */
+    .q-prog { padding-left: 17px; margin-top: 8px; }
+    .prog-track {
+      height: 3px; background: #1e2130; border-radius: 2px;
+      overflow: hidden; margin-bottom: 5px;
+    }
+    .prog-fill {
+      height: 100%; border-radius: 2px; transition: width .3s ease;
+    }
+    .prog-fill.ph-hash   { background: linear-gradient(90deg, #1d4ed8, #60a5fa); }
+    .prog-fill.ph-upload { background: linear-gradient(90deg, #4338ca, #818cf8); }
+
+    .prog-stats {
+      display: flex; gap: 10px; font-size: 0.72rem; color: #4b5563;
+    }
+    .prog-stats .st-pct  { color: #818cf8; font-weight: 600; }
+    .prog-stats .st-spd  { color: #64748b; }
+    .prog-stats .st-eta  { color: #64748b; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <h1>Upload Queue</h1>
+  <p class="sub">Resumable · SHA-256 per chunk · sequential queue · drag &amp; drop</p>
+
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="filePicker" multiple>
+    <div class="dz-icon">📂</div>
+    <div class="dz-main">Drop files here or click to browse</div>
+    <div class="dz-count" id="dzCount"></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="dest-wrap">
+      <label>Prefix</label>
+      <input type="text" id="destPrefix" value="chttp2/" placeholder="destination prefix">
+    </div>
+    <button class="btn-upload" id="btnUpload" disabled>Upload</button>
+    <button class="btn-pause"  id="btnPause"  disabled>Pause</button>
+  </div>
+
+  <div id="queueSection" style="display:none">
+    <div class="section-label">
+      <span>Queue</span>
+      <span class="count" id="queueCount"></span>
+    </div>
+    <div id="queueList"></div>
+  </div>
+  <div class="queue-empty" id="queueEmpty">No files added yet</div>
+</div>
+
+<script>
+'use strict';
+
+const BASE       = 'http://localhost:8080';
+const CHUNK_SIZE = 4 * 1024 * 1024;  /* 4 MB */
+const LS_PFX     = 'chttp2-mq-';
+
+/* ── State ─────────────────────────────────────────────────────────────────*/
+let queue      = [];
+let seq        = 0;
+let running    = false;
+let paused     = false;
+let activeItem = null;
+
+/* ── Item factory ──────────────────────────────────────────────────────────*/
+function mkItem(file) {
+  const prefix = document.getElementById('destPrefix').value || 'chttp2/';
+  const dest   = prefix.replace(/\/+$/, '') + '/' + file.name;
+  const nchunks= Math.ceil(file.size / CHUNK_SIZE) || 1;
+  return {
+    id:           ++seq,
+    file,
+    dest,
+    status:       'pending',   /* pending|hashing|uploading|complete|error|aborted */
+    hashDone:     0,           /* chunks hashed */
+    doneAtStart:  0,           /* chunks already done when upload phase began */
+    uploadTotal:  0,           /* missing chunks this session */
+    uploadDone:   0,           /* chunks uploaded this session */
+    chunkCount:   nchunks,
+    uploadId:     null,
+    chunkHashes:  null,
+    startTime:    null,
+    speed:        0,
+    eta:          Infinity,
+    error:        null,
+    aborted:      false,
+    ctrl:         null,
+  };
+}
+
+/* ── localStorage ──────────────────────────────────────────────────────────*/
+const lsKey  = item => `${LS_PFX}${item.dest}|${item.file.size}`;
+const lsSave = (item, v) => localStorage.setItem(lsKey(item), JSON.stringify(v));
+const lsLoad = item => { try { return JSON.parse(localStorage.getItem(lsKey(item))); } catch { return null; } };
+const lsDel  = item => localStorage.removeItem(lsKey(item));
+
+/* ── Drop / pick ───────────────────────────────────────────────────────────*/
+const dropZone  = document.getElementById('dropZone');
+const filePicker= document.getElementById('filePicker');
+
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('over');
+  addFiles([...e.dataTransfer.files]);
+});
+filePicker.addEventListener('change', () => {
+  addFiles([...filePicker.files]);
+  filePicker.value = '';
+});
+
+function addFiles(files) {
+  for (const f of files) queue.push(mkItem(f));
+  paint();
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────*/
+document.getElementById('btnUpload').addEventListener('click', () => {
+  if (!running) startQueue();
+});
+
+document.getElementById('btnPause').addEventListener('click', () => {
+  const btn = document.getElementById('btnPause');
+  paused = !paused;
+  btn.textContent = paused ? 'Resume' : 'Pause';
+  btn.classList.toggle('paused', paused);
+});
+
+/* ── Queue loop ────────────────────────────────────────────────────────────*/
+async function startQueue() {
+  if (running) return;
+  running = true;
+  paintToolbar();
+
+  while (true) {
+    await idleWait(null);
+    const item = queue.find(i => i.status === 'pending');
+    if (!item) break;
+    activeItem = item;
+    item.ctrl  = new AbortController();
+    await processItem(item);
+    activeItem = null;
+  }
+
+  running = false;
+  paused  = false;
+  const btn = document.getElementById('btnPause');
+  btn.textContent = 'Pause';
+  btn.classList.remove('paused');
+  paintToolbar();
+}
+
+/* ── Process one item ──────────────────────────────────────────────────────*/
+async function processItem(item) {
+  try {
+    /* ── Try to resume saved session ── */
+    let missingChunks = null;
+    const saved = lsLoad(item);
+
+    if (saved?.upload_id) {
+      try {
+        const r = await fetch(`${BASE}/fs/upload-session/${saved.upload_id}`, {
+          credentials: 'include', signal: item.ctrl.signal,
+        });
+        if (r.ok) {
+          const st = await r.json();
+          item.uploadId    = saved.upload_id;
+          item.chunkHashes = saved.chunk_hashes;
+          const done = new Set(st.received_chunks);
+          missingChunks = range(item.chunkCount).filter(i => !done.has(i));
+          item.hashDone = item.chunkCount;  /* already hashed, skip phase */
+        } else {
+          lsDel(item);
+        }
+      } catch (e) {
+        if (isAbort(e)) throw e;
+        lsDel(item);
+      }
+    }
+
+    /* ── Hash phase ── */
+    if (!item.uploadId) {
+      item.status   = 'hashing';
+      item.hashDone = 0;
+      paintItem(item);
+
+      item.chunkHashes = await hashFile(item);
+      if (item.aborted) return;
+
+      /* mkdir -p for destination directory */
+      const slash = item.dest.lastIndexOf('/');
+      if (slash > 0) {
+        const dir = item.dest.slice(0, slash);
+        await fetch(`${BASE}/fs/mkdir`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: dir }),
+          signal: item.ctrl.signal,
+        }).catch(() => {});
+        if (item.aborted) return;
+      }
+
+      /* Create session */
+      const cr = await fetch(`${BASE}/fs/upload-session`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dest:         item.dest,
+          filename:     item.file.name,
+          file_size:    item.file.size,
+          chunk_size:   CHUNK_SIZE,
+          chunk_count:  item.chunkCount,
+          chunk_hashes: item.chunkHashes,
+        }),
+        signal: item.ctrl.signal,
+      });
+      if (!cr.ok) throw new Error(await cr.text());
+      const { upload_id } = await cr.json();
+      item.uploadId = upload_id;
+      lsSave(item, { upload_id, chunk_hashes: item.chunkHashes });
+
+      missingChunks = range(item.chunkCount);
+    }
+
+    /* ── Upload phase ── */
+    item.status      = 'uploading';
+    item.doneAtStart = item.chunkCount - missingChunks.length;
+    item.uploadTotal = missingChunks.length;
+    item.uploadDone  = 0;
+    item.startTime   = Date.now();
+    item.speed       = 0;
+    item.eta         = Infinity;
+    paintItem(item);
+
+    for (const ci of missingChunks) {
+      await idleWait(item);
+      if (item.aborted) return;
+
+      const complete = await uploadChunk(item, ci);
+      item.uploadDone++;
+      recalcSpeed(item);
+      paintItem(item);
+
+      if (complete) {
+        item.status = 'complete';
+        item.speed  = 0;
+        item.eta    = 0;
+        lsDel(item);
+        paintItem(item);
+        return;
+      }
+    }
+
+    /* Edge: all chunks were already done (session found, nothing missing) */
+    item.status = 'complete';
+    lsDel(item);
+    paintItem(item);
+
+  } catch (e) {
+    if (isAbort(e)) {
+      item.status = 'aborted';
+    } else {
+      item.status = 'error';
+      item.error  = e.message;
+    }
+    paintItem(item);
+  }
+}
+
+/* ── Hash a file, chunk by chunk ───────────────────────────────────────────*/
+async function hashFile(item) {
+  const hashes = [];
+  for (let i = 0; i < item.chunkCount; i++) {
+    await idleWait(item);
+    if (item.aborted) throw abortErr();
+    const ab = await item.file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE).arrayBuffer();
+    const dg = await crypto.subtle.digest('SHA-256', ab);
+    hashes.push(hexOf(dg));
+    item.hashDone = i + 1;
+    paintItem(item);
+  }
+  return hashes;
+}
+
+function hexOf(ab) {
+  return Array.from(new Uint8Array(ab)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* ── Upload one chunk (with retry) ────────────────────────────────────────*/
+async function uploadChunk(item, ci, maxRetry = 10) {
+  const blob  = item.file.slice(ci * CHUNK_SIZE, (ci + 1) * CHUNK_SIZE);
+  let delay   = 600;
+
+  for (let attempt = 0; attempt <= maxRetry; attempt++) {
+    await idleWait(item);
+    if (item.aborted) throw abortErr();
+    try {
+      const r = await fetch(`${BASE}/fs/upload-chunk/${item.uploadId}`, {
+        method:      'POST',
+        credentials: 'include',
+        headers:     { 'Content-Type': 'application/octet-stream', 'X-Chunk-Index': String(ci) },
+        body:        blob,
+        signal:      item.ctrl.signal,
+      });
+      if (r.status === 422) {
+        if (attempt < maxRetry) { await sleep(delay); delay = Math.min(delay * 2, 30000); continue; }
+        throw new Error(`Hash mismatch on chunk ${ci}`);
+      }
+      if (!r.ok) {
+        if (attempt < maxRetry) { await sleep(delay); delay = Math.min(delay * 2, 30000); continue; }
+        throw new Error(`HTTP ${r.status} uploading chunk ${ci}`);
+      }
+      const body = await r.json();
+      return !!body.path;   /* true = server signalled completion (201) */
+    } catch (e) {
+      if (isAbort(e)) throw e;
+      if (attempt < maxRetry) { await sleep(delay); delay = Math.min(delay * 2, 30000); }
+      else throw e;
+    }
+  }
+  return false;
+}
+
+/* ── Speed / ETA ───────────────────────────────────────────────────────────*/
+function recalcSpeed(item) {
+  const elapsed = (Date.now() - item.startTime) / 1000;
+  if (elapsed < 0.2) return;
+  const bytesDone = item.uploadDone * CHUNK_SIZE;
+  item.speed = bytesDone / elapsed;
+  const bytesLeft = (item.uploadTotal - item.uploadDone) * CHUNK_SIZE;
+  item.eta   = item.speed > 0 ? bytesLeft / item.speed : Infinity;
+}
+
+/* ── Abort per item ────────────────────────────────────────────────────────*/
+function doAbort(id) {
+  const item = queue.find(i => i.id === id);
+  if (!item) return;
+
+  /* For complete/error/aborted: just remove */
+  if (item.status === 'complete' || item.status === 'error' || item.status === 'aborted') {
+    queue = queue.filter(i => i !== item);
+    paint(); return;
+  }
+
+  item.aborted = true;
+  if (item.ctrl) item.ctrl.abort();
+  if (item.uploadId) {
+    fetch(`${BASE}/fs/upload-session/${item.uploadId}`, {
+      method: 'DELETE', credentials: 'include',
+    }).catch(() => {});
+    lsDel(item);
+    item.uploadId = null;
+  }
+  queue = queue.filter(i => i !== item);
+  paint();
+}
+
+/* ── Helpers ───────────────────────────────────────────────────────────────*/
+const range    = n => Array.from({ length: n }, (_, i) => i);
+const sleep    = ms => new Promise(r => setTimeout(r, ms));
+const isAbort  = e => e?.name === 'AbortError';
+const abortErr = () => new DOMException('Aborted', 'AbortError');
+
+/* Wait while paused (50 ms poll) — checks item abort too */
+async function idleWait(item) {
+  while (paused) {
+    if (item && item.aborted) return;
+    await sleep(50);
+  }
+}
+
+/* ── Render ────────────────────────────────────────────────────────────────*/
+function paint() {
+  const listEl    = document.getElementById('queueList');
+  const sectionEl = document.getElementById('queueSection');
+  const emptyEl   = document.getElementById('queueEmpty');
+
+  if (queue.length === 0) {
+    listEl.innerHTML = '';
+    sectionEl.style.display = 'none';
+    emptyEl.style.display   = 'block';
+    paintToolbar();
+    return;
+  }
+
+  emptyEl.style.display   = 'none';
+  sectionEl.style.display = 'block';
+
+  const done = queue.filter(i => i.status === 'complete').length;
+  document.getElementById('queueCount').textContent =
+    `${queue.length} file${queue.length !== 1 ? 's' : ''} · ${done} done`;
+
+  /* Add/update items */
+  const seen = new Set();
+  for (const item of queue) {
+    seen.add(item.id);
+    let el = document.getElementById(`qi-${item.id}`);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = `qi-${item.id}`;
+      listEl.appendChild(el);
+    }
+    paintItemEl(item, el);
+  }
+
+  /* Remove stale elements */
+  [...listEl.children].forEach(el => {
+    const id = parseInt(el.id.replace('qi-', ''), 10);
+    if (!seen.has(id)) el.remove();
+  });
+
+  paintToolbar();
+}
+
+function paintItem(item) {
+  const el = document.getElementById(`qi-${item.id}`);
+  if (el) paintItemEl(item, el);
+  const done = queue.filter(i => i.status === 'complete').length;
+  const cnt  = document.getElementById('queueCount');
+  if (cnt) cnt.textContent = `${queue.length} file${queue.length !== 1 ? 's' : ''} · ${done} done`;
+  paintToolbar();
+}
+
+function paintItemEl(item, el) {
+  /* Progress percentage */
+  let pct = 0;
+  if (item.status === 'hashing') {
+    pct = Math.round(item.hashDone / item.chunkCount * 100);
+  } else if (item.status === 'uploading') {
+    const totalDone = item.doneAtStart + item.uploadDone;
+    pct = Math.round(totalDone / item.chunkCount * 100);
+  } else if (item.status === 'complete') {
+    pct = 100;
+  }
+
+  /* Status label */
+  const statusText = {
+    pending:   'Pending',
+    hashing:   `Hashing ${item.hashDone} / ${item.chunkCount} chunks…`,
+    uploading: `${pct}%` +
+               (item.speed > 0 ? `  ·  ${fmtBytes(item.speed)}/s` : '') +
+               (item.eta < Infinity && item.eta > 0 ? `  ·  ETA ${fmtSecs(item.eta)}` : ''),
+    complete:  '✓ Complete',
+    error:     `✕ ${item.error || 'Error'}`,
+    aborted:   'Aborted',
+  }[item.status] || item.status;
+
+  /* CSS classes */
+  const active = item.status === 'hashing' || item.status === 'uploading';
+  const cls = [
+    'q-item',
+    active               ? 'active' : '',
+    item.status === 'complete' ? 'done' : '',
+    item.status === 'aborted' || item.status === 'error' ? 'gone' : '',
+  ].filter(Boolean).join(' ');
+
+  const abortLabel = (item.status === 'complete' || item.status === 'error' || item.status === 'aborted')
+    ? '✕ Remove' : '✕ Abort';
+
+  const showBar = item.status === 'hashing' || item.status === 'uploading' || item.status === 'complete';
+  const barCls  = item.status === 'hashing' ? 'ph-hash' : 'ph-upload';
+
+  el.className = cls;
+  el.innerHTML = `
+    <div class="q-row1">
+      <div class="dot dot-${item.status}"></div>
+      <div class="q-name" title="${esc(item.file.name)}">${esc(item.file.name)}</div>
+      <div class="q-size">${fmtBytes(item.file.size)}</div>
+      <button class="q-abort" data-id="${item.id}">${abortLabel}</button>
+    </div>
+    <div class="q-dest">${esc(item.dest)}</div>
+    <div class="q-status st-${item.status}">${statusText}</div>
+    ${showBar ? `
+      <div class="q-prog">
+        <div class="prog-track">
+          <div class="prog-fill ${barCls}" style="width:${pct}%"></div>
+        </div>
+      </div>` : ''}
+  `;
+
+  el.querySelector('.q-abort').addEventListener('click', () => doAbort(item.id));
+}
+
+function paintToolbar() {
+  const hasPending = queue.some(i => i.status === 'pending');
+  document.getElementById('btnUpload').disabled = running || !hasPending;
+  document.getElementById('btnPause').disabled  = !running;
+  const dzCount = document.getElementById('dzCount');
+  const pending = queue.filter(i => i.status === 'pending').length;
+  dzCount.textContent = queue.length > 0
+    ? `${queue.length} file${queue.length !== 1 ? 's' : ''} queued · ${pending} pending`
+    : '';
+}
+
+/* ── Formatting ─────────────────────────────────────────────────────────────*/
+function fmtBytes(b) {
+  if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+function fmtSecs(s) {
+  if (!isFinite(s) || s <= 0) return '...';
+  if (s >= 3600) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+  if (s >= 60)   return `${Math.floor(s/60)}m ${Math.floor(s%60)}s`;
+  return `${Math.ceil(s)}s`;
+}
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Init ───────────────────────────────────────────────────────────────────*/
+paint();
+</script>
+</body>
+</html>
