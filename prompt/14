@@ -1,0 +1,8 @@
+now create a new /fs/upload-stream-resumable endpoint that resumes uploads from the last known offset
+
+maintain the file offset in the session
+checksum the file and store it in the session at start
+only allow to resume when its matches with original checksum
+temporary file should be named something like .upload-stream-resumable-XXXXXX (XXXXXX is a random string)
+
+rest login same as the /fs/upload-stream endpoint
