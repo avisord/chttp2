@@ -1,3 +1,4 @@
+#define _GNU_SOURCE  /* memmem */
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -155,7 +156,10 @@ int parse_multipart(HttpRequest *req, HttpResponse *res,
   char *file_data = body_start + 4;
   char end_delim[134] = "\r\n--";
   strncat(end_delim, boundary, sizeof(end_delim) - strlen(end_delim) - 1);
-  char *file_end = strstr(file_data, end_delim);
+  size_t end_delim_len = strlen(end_delim);
+  /* Use memmem — not strstr — so binary files with \0 bytes are handled. */
+  size_t remaining = req->body_len - (size_t)(file_data - req->body);
+  char *file_end = memmem(file_data, remaining, end_delim, end_delim_len);
   if (!file_end) {
     chttp_set_status(res, 400);
     chttp_send_text(res, "Could not locate end boundary");
