@@ -1,0 +1,45 @@
+create a new ui to parallel upload multiple chunks at once:
+
+i understand the limits so we will find workarounds:
+  - we will firstly instead of uploading a single chunk at a time we will upload multiple chunks in a sliding window of n chunks set by the user
+  - instead of showing a number based progress show a chunkeds based progress like in single file upload ui at: web/resumable-upload.html 
+  - keep it for single file only right now (single file upload ui is the only one that needs it)
+  - we should be also able to configure the chunk size and the number of chunks to upload at once
+  - we should be able to pause, resume and abort the upload
+  - the upload should be resumed from the last known offset
+
+  keep this in saperate html file:
+  - named: /parallel-resumable-chunk-upload.html
+
+
+  ---
+
+  ● Done. Here's what the file does and the key design decisions:
+
+  Sliding window via worker pool
+
+  Instead of a semaphore, N independent async workers share a single pending[] array and each calls .shift() to grab the next chunk. This naturally
+   creates a window of exactly N concurrent uploads — as one finishes, it immediately picks up the next. No coordination needed beyond the shared
+  queue.
+
+  Race condition on completion
+
+  When the last few chunks are in-flight simultaneously, one chunk triggers server-side completion (rename + session cleanup). Other workers that
+  were mid-upload get a 404. The handler treats 404 as 'gone' (session completed by peer) — sets completed = true and exits cleanly, rather than
+  throwing an error.
+
+  Pause accuracy
+
+  Pause time is excluded from speed/ETA: pauseStart captures when pause begins, totalPausedMs accumulates each pause duration, and activeMs =
+  Date.now() - uploadStartTime - totalPausedMs gives real active wall time. Pause also works during hashing (checks between chunks).
+
+  Resume without rehash
+
+  localStorage stores { upload_id, chunk_size, chunk_hashes }. On "Check & Resume", the client queries GET /fs/upload-session/:id for the server's
+  received_chunks[], pre-colours those cells green, and only uploads the missing ones — no rehash.
+
+  Config lockout
+
+  Chunk size and window size selectors are disabled during upload so they can't be changed mid-session (which would invalidate the manifest).
+
+
