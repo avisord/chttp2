@@ -1,0 +1,29 @@
+❯ so you mean its not chunked response, what do you mean by zero copy
+
+● Correct, it's not chunked transfer encoding. The response uses a fixed Content-Length header — the client knows the exact size upfront and
+  receives a single contiguous byte stream.
+
+  ---
+  Zero-copy refers to what happens inside the kernel when sendfile() is called.
+
+  Normal file-to-socket transfer (without sendfile):
+  disk → kernel page cache → user-space buffer → kernel socket buffer → NIC
+                           ↑                   ↑
+                      read() copies        write() copies
+                      data here            data here
+  Two copies cross the kernel/user-space boundary. The data passes through your process's memory even though your code never looks at it.
+
+  With sendfile():
+  disk → kernel page cache → kernel socket buffer → NIC
+                           ↑
+                      kernel moves data
+                      internally (no user-space crossing)
+  The kernel transfers directly from the file's page cache to the socket buffer without ever copying bytes into your process's address space. Your
+  process just makes the syscall and the kernel does the rest.
+
+  The practical effect: for large files, sendfile() is faster and uses less CPU because it avoids those two memory copies. It's the same mechanism
+  used by nginx for static file serving.
+
+  The "zero-copy" label is slightly informal — there may still be a DMA copy to the NIC — but from the application's perspective, zero bytes are
+  copied through user space.
+

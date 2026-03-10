@@ -13,7 +13,7 @@ int g_server_fd = -1;
 DEFINE_AUTH_ROUTE(handle_whoami,        handle_whoami_impl)
 DEFINE_AUTH_ROUTE(handle_fs_list,        handle_fs_list_impl)
 DEFINE_AUTH_ROUTE(handle_fs_upload,      handle_fs_upload_impl)
-DEFINE_AUTH_ROUTE(handle_fs_download,    handle_fs_download_impl)
+DEFINE_STREAM_AUTH_ROUTE(handle_fs_download, handle_fs_download_impl)
 DEFINE_AUTH_ROUTE(handle_fs_delete_file, handle_fs_delete_file_impl)
 DEFINE_AUTH_ROUTE(handle_fs_mkdir,       handle_fs_mkdir_impl)
 DEFINE_AUTH_ROUTE(handle_fs_rmdir,       handle_fs_rmdir_impl)
@@ -62,7 +62,7 @@ int main(void) {
   /* NAS File Management API — all authenticated */
   CHTTP_GET(&srv,    "/fs/list",     handle_fs_list);
   CHTTP_POST(&srv,   "/fs/upload",   handle_fs_upload);
-  CHTTP_GET(&srv,    "/fs/download", handle_fs_download);
+  CHTTP_STREAM_GET(&srv, "/fs/download", handle_fs_download);
   CHTTP_DELETE(&srv, "/fs/file",     handle_fs_delete_file);
   CHTTP_POST(&srv,   "/fs/mkdir",    handle_fs_mkdir);
   CHTTP_DELETE(&srv, "/fs/dir",      handle_fs_rmdir);

@@ -77,6 +77,7 @@ int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd
 #define CHTTP_WS(s,p,h)          chttp_ws_route(s,  p, h)
 #define CHTTP_SSE(s,p,h)         chttp_sse_route(s, p, h)
 #define CHTTP_STREAM_POST(s,p,h) chttp_stream_route(s, "POST", p, h)
+#define CHTTP_STREAM_GET(s,p,h)  chttp_stream_route(s, "GET",  p, h)
 
 /* WebSocket I/O (usable in WsHandler callbacks) */
 int chttp_ws_send(int fd, const char *payload, size_t len);

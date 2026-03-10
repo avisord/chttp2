@@ -10,24 +10,66 @@ const char *mime_from_ext(const char *filename) {
   const char *dot = strrchr(filename, '.');
   if (!dot)
     return "application/octet-stream";
-  if (strcmp(dot, ".txt") == 0)
-    return "text/plain";
-  if (strcmp(dot, ".html") == 0)
-    return "text/html";
-  if (strcmp(dot, ".json") == 0)
-    return "application/json";
-  if (strcmp(dot, ".png") == 0)
-    return "image/png";
-  if (strcmp(dot, ".jpg") == 0 || strcmp(dot, ".jpeg") == 0)
-    return "image/jpeg";
-  if (strcmp(dot, ".gif") == 0)
-    return "image/gif";
-  if (strcmp(dot, ".pdf") == 0)
-    return "application/pdf";
-  if (strcmp(dot, ".csv") == 0)
-    return "text/csv";
+
+  /* text / web */
+  if (strcasecmp(dot, ".txt") == 0) return "text/plain";
+  if (strcasecmp(dot, ".html") == 0 || strcasecmp(dot, ".htm") == 0) return "text/html";
+  if (strcasecmp(dot, ".css") == 0) return "text/css";
+  if (strcasecmp(dot, ".js") == 0) return "application/javascript";
+  if (strcasecmp(dot, ".json") == 0) return "application/json";
+  if (strcasecmp(dot, ".xml") == 0) return "application/xml";
+  if (strcasecmp(dot, ".csv") == 0) return "text/csv";
+
+  /* images */
+  if (strcasecmp(dot, ".png") == 0) return "image/png";
+  if (strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0) return "image/jpeg";
+  if (strcasecmp(dot, ".gif") == 0) return "image/gif";
+  if (strcasecmp(dot, ".svg") == 0) return "image/svg+xml";
+  if (strcasecmp(dot, ".webp") == 0) return "image/webp";
+  if (strcasecmp(dot, ".ico") == 0) return "image/x-icon";
+  if (strcasecmp(dot, ".bmp") == 0) return "image/bmp";
+  if (strcasecmp(dot, ".tiff") == 0 || strcasecmp(dot, ".tif") == 0) return "image/tiff";
+
+  /* fonts */
+  if (strcasecmp(dot, ".woff") == 0) return "font/woff";
+  if (strcasecmp(dot, ".woff2") == 0) return "font/woff2";
+  if (strcasecmp(dot, ".ttf") == 0) return "font/ttf";
+  if (strcasecmp(dot, ".otf") == 0) return "font/otf";
+  if (strcasecmp(dot, ".eot") == 0) return "application/vnd.ms-fontobject";
+
+  /* archives */
+  if (strcasecmp(dot, ".zip") == 0) return "application/zip";
+  if (strcasecmp(dot, ".tar") == 0) return "application/x-tar";
+  if (strcasecmp(dot, ".gz") == 0) return "application/gzip";
+  if (strcasecmp(dot, ".tgz") == 0) return "application/gzip";
+  if (strcasecmp(dot, ".rar") == 0) return "application/vnd.rar";
+  if (strcasecmp(dot, ".7z") == 0) return "application/x-7z-compressed";
+
+  /* documents */
+  if (strcasecmp(dot, ".pdf") == 0) return "application/pdf";
+  if (strcasecmp(dot, ".doc") == 0) return "application/msword";
+  if (strcasecmp(dot, ".docx") == 0) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (strcasecmp(dot, ".xls") == 0) return "application/vnd.ms-excel";
+  if (strcasecmp(dot, ".xlsx") == 0) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (strcasecmp(dot, ".ppt") == 0) return "application/vnd.ms-powerpoint";
+  if (strcasecmp(dot, ".pptx") == 0) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+  /* audio */
+  if (strcasecmp(dot, ".mp3") == 0) return "audio/mpeg";
+  if (strcasecmp(dot, ".wav") == 0) return "audio/wav";
+  if (strcasecmp(dot, ".ogg") == 0) return "audio/ogg";
+  if (strcasecmp(dot, ".flac") == 0) return "audio/flac";
+
+  /* video */
+  if (strcasecmp(dot, ".mp4") == 0) return "video/mp4";
+  if (strcasecmp(dot, ".webm") == 0) return "video/webm";
+  if (strcasecmp(dot, ".mkv") == 0) return "video/x-matroska";
+  if (strcasecmp(dot, ".avi") == 0) return "video/x-msvideo";
+  if (strcasecmp(dot, ".mov") == 0) return "video/quicktime";
+
   return "application/octet-stream";
 }
+
 
 int safe_filename(const char *name) {
   return name && *name && !strchr(name, '/') && !strchr(name, '\\') &&

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -107,36 +108,48 @@ void handle_fs_download_impl(HttpRequest *req, HttpResponse *res) {
     return;
   }
 
-  FILE *f = fopen(path, "rb");
-  if (!f) { fs_error(res, errno); return; }
-
-  fseek(f, 0, SEEK_END);
-  long fsize = ftell(f);
-  fseek(f, 0, SEEK_SET);
-
-  if (fsize < 0) {
-    fclose(f);
-    chttp_set_status(res, 500);
-    chttp_send_json(res, "{\"error\":\"Failed to read file size\",\"errno\":0}");
+  struct stat st;
+  if (stat(path, &st) < 0) { fs_error(res, errno); return; }
+  if (!S_ISREG(st.st_mode)) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Not a regular file\",\"errno\":0}");
     return;
   }
 
-  if (chttp_body_alloc(res, (size_t)fsize) < 0) {
-    fclose(f);
-    chttp_set_status(res, 500);
-    chttp_send_json(res, "{\"error\":\"Out of memory\",\"errno\":0}");
-    return;
-  }
-  res->body_len = fread(res->body, 1, (size_t)fsize, f);
-  fclose(f);
+  int file_fd = open(path, O_RDONLY);
+  if (file_fd < 0) { fs_error(res, errno); return; }
 
   const char *slash = strrchr(path, '/');
-  const char *basename = slash ? slash + 1 : path;
-  chttp_set_header(res, "Content-Type", mime_from_ext(basename));
+  const char *fname = slash ? slash + 1 : path;
 
-  char cd[512];
-  snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", basename);
-  chttp_set_header(res, "Content-Disposition", cd);
+  /* Write HTTP response headers directly to the client socket */
+  char hbuf[4096];
+  char cd[320];
+  snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", fname);
+  int n = snprintf(hbuf, sizeof(hbuf),
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: %s\r\n"
+      "Content-Disposition: %s\r\n"
+      "Content-Length: %lld\r\n"
+      "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+      "Access-Control-Allow-Credentials: true\r\n"
+      "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
+      "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
+      "\r\n",
+      mime_from_ext(fname), cd, (long long)st.st_size);
+  write(req->fd, hbuf, n);
+
+  /* Zero-copy kernel transfer: file → socket */
+  off_t offset = 0;
+  off_t remaining = st.st_size;
+  while (remaining > 0) {
+    ssize_t sent = sendfile(req->fd, file_fd, &offset, (size_t)remaining);
+    if (sent <= 0) break;   /* client disconnected — nothing to do */
+    remaining -= sent;
+  }
+
+  close(file_fd);
+  res->status = 0;  /* headers already sent — skip chttp_write_response */
 }
 
 /* DELETE /fs/file?path=docs/file.txt */
