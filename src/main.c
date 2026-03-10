@@ -5,6 +5,7 @@
 #include "auth/auth.h"
 #include "fs/fs.h"
 #include "routes/routes.h"
+#include "routes/static.h"
 
 int g_server_fd = -1;
 
@@ -77,6 +78,13 @@ int main(void) {
   CHTTP_GET(&srv,         "/fs/upload-session/:upload_id",    handle_fs_upload_session_status);
   CHTTP_STREAM_POST(&srv, "/fs/upload-chunk/:upload_id",      handle_fs_upload_chunk);
   CHTTP_DELETE(&srv,      "/fs/upload-session/:upload_id",    handle_fs_upload_session_abort);
+
+  /* Static file server — public, no auth */
+  CHTTP_STREAM_GET(&srv, "/static/*", handle_static);
+  CHTTP_HEAD(&srv,       "/static/*", handle_static);
+  /* Catch-all: serve www/ for any unmatched GET/HEAD (registered last) */
+  CHTTP_STREAM_GET(&srv, "/*", handle_static);
+  CHTTP_HEAD(&srv,       "/*", handle_static);
 
   chttp_server_run(&srv);
 

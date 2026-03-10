@@ -76,6 +76,7 @@ int  chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd
 #define CHTTP_PATCH(s,p,h)  chttp_route(s, "PATCH",  p, h)
 #define CHTTP_WS(s,p,h)          chttp_ws_route(s,  p, h)
 #define CHTTP_SSE(s,p,h)         chttp_sse_route(s, p, h)
+#define CHTTP_HEAD(s,p,h)        chttp_route(s, "HEAD", p, h)
 #define CHTTP_STREAM_POST(s,p,h) chttp_stream_route(s, "POST", p, h)
 #define CHTTP_STREAM_GET(s,p,h)  chttp_stream_route(s, "GET",  p, h)
 

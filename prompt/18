@@ -1,0 +1,198 @@
+now we have to serve static files for froentend 
+the requirement is to impelement a static file server in same http server
+
+to expose a designated directory to the web, we need to implement a route handler
+
+it should be a GET /static/<filename> route or GET /web/<filename> route
+
+1. the handler should read the file from disk and send it to the client
+   without copying to the memory, using sendfile() syscall or better if any
+2. the handler should also set the Content-Type header based on the file extension
+3. must prevent accessing files outside the root. for example, GET /static/../../etc/passwd
+4. must send correct content length header
+5. must support range requests for partial file downloads
+6. must support:
+   - If Modified Since header
+   - If None Match header
+7. must handle directory index files:
+   - index.html
+   - index.htm
+8. we do not want directory listings 
+9. compression can be handled later
+10. should support head requests
+11. should support only these methods: GET, HEAD
+
+
+---
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Plan to implement                                                                                                    │
+│                                                                                                                      │
+│ Plan: Static File Server (GET /static/*, HEAD /static/*)                                                             │
+│                                                                                                                      │
+│ Context                                                                                                              │
+│                                                                                                                      │
+│ The server needs to serve frontend assets (HTML, CSS, JS, images) from a local www/ directory                        │
+│ at the /static/* URL prefix. The handler must be public (no auth), use zero-copy sendfile(),                         │
+│ support conditional requests and Range, and prevent path traversal. Both GET and HEAD are required.                  │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ Key facts from codebase                                                                                              │
+│                                                                                                                      │
+│ - chttp_match_route is segment-based — :param only captures one segment (no slashes).                                │
+│ A trailing * wildcard does not exist yet and must be added.                                                          │
+│ - connection_thread checks if (res.status != 0) before calling chttp_write_response,                                 │
+│ so setting res->status = 0 suppresses the framework write for non-forked handlers too.                               │
+│ - Makefile uses find src/ -name '*.c' — new .c files are auto-included, no Makefile change.                          │
+│ - mime_from_ext in src/utils/utils.h already covers all common web file types.                                       │
+│ - chttp_url_decode exists in src/utils/utils.h — use it to decode the path before processing.                        │
+│ - CORS string is hardcoded in chttp_write_response; must be duplicated in the static handler                         │
+│ since it writes headers directly.                                                                                    │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ Files to Change/Create                                                                                               │
+│                                                                                                                      │
+│ ┌─────────────────────┬────────────────────────────────────────────────────────┐                                     │
+│ │        File         │                         Change                         │                                     │
+│ ├─────────────────────┼────────────────────────────────────────────────────────┤                                     │
+│ │ lib/chttp.c         │ Add trailing * wildcard to chttp_match_route (3 lines) │                                     │
+│ ├─────────────────────┼────────────────────────────────────────────────────────┤                                     │
+│ │ lib/chttp.h         │ Add CHTTP_HEAD macro (1 line)                          │                                     │
+│ ├─────────────────────┼────────────────────────────────────────────────────────┤                                     │
+│ │ src/routes/static.c │ New file: handle_static handler                        │                                     │
+│ ├─────────────────────┼────────────────────────────────────────────────────────┤                                     │
+│ │ src/routes/static.h │ New file: declaration                                  │                                     │
+│ ├─────────────────────┼────────────────────────────────────────────────────────┤                                     │
+│ │ src/main.c          │ Register two routes                                    │                                     │
+│ └─────────────────────┴────────────────────────────────────────────────────────┘                                     │
+│                                                                                                                      │
+│ No Makefile change needed.                                                                                           │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ 1. lib/chttp.c — wildcard in chttp_match_route                                                                       │
+│                                                                                                                      │
+│ In the while loop, after p_end/u_end are found and before the : check (line ~180),                                   │
+│ add:                                                                                                                 │
+│ /* Trailing '*' matches the rest of the URL path including slashes */                                                │
+│ if (p_end == p + 1 && *p == '*' && *p_end == '\0')                                                                   │
+│     return 1;                                                                                                        │
+│ This makes /static/* match /static/js/app.js, /static/, /static/a/b/c.png, etc.                                      │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ 2. lib/chttp.h — CHTTP_HEAD macro                                                                                    │
+│                                                                                                                      │
+│ Add next to the other macros:                                                                                        │
+│ #define CHTTP_HEAD(s,p,h) chttp_route(s, "HEAD", p, h)                                                               │
+│ HEAD has no request body, so non-streaming is fine.                                                                  │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ 3. src/routes/static.h                                                                                               │
+│                                                                                                                      │
+│ #ifndef STATIC_H                                                                                                     │
+│ #define STATIC_H                                                                                                     │
+│ #include "chttp.h"                                                                                                   │
+│ void handle_static(HttpRequest *req, HttpResponse *res);                                                             │
+│ #endif                                                                                                               │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ 4. src/routes/static.c — handler                                                                                     │
+│                                                                                                                      │
+│ Includes: fcntl.h, limits.h, sys/sendfile.h, sys/stat.h, time.h, unistd.h, plus                                      │
+│ chttp.h, utils/utils.h.                                                                                              │
+│                                                                                                                      │
+│ Constant at top: #define STATIC_ROOT "www".                                                                          │
+│                                                                                                                      │
+│ handle_static flow (handles both GET and HEAD via req->method check):                                                │
+│                                                                                                                      │
+│ 1. Strip /static/ prefix from req->path:                                                                             │
+│ const char *rel_raw = req->path + strlen("/static/");                                                                │
+│ 2. URL-decode rel_raw into a local buffer using chttp_url_decode.                                                    │
+│ 3. Reject if decoded path contains ".." → write 400 directly to req->fd, set res->status=0.                          │
+│ 4. Build full_path: snprintf(full_path, sizeof(full_path), "%s/%s", STATIC_ROOT, rel_decoded).                       │
+│ 5. stat(full_path, &st) — on failure write 404 to fd, return.                                                        │
+│ 6. If directory (S_ISDIR): try full_path/index.html then full_path/index.htm; if neither                             │
+│ found, write 403 (no directory listing), return.                                                                     │
+│ 7. Reject if not regular file (S_ISREG) → 404.                                                                       │
+│ 8. realpath(STATIC_ROOT, root_rp) + realpath(full_path, file_rp): verify file_rp starts                              │
+│ with root_rp + '/' → 403 if not. (Catches symlinks pointing outside root.)                                           │
+│ 9. ETag: snprintf(etag, sizeof(etag), "\"%llx-%llx\"", (long long)st.st_mtime, (long long)st.st_size).               │
+│ 10. If-None-Match: compare chttp_header(req, "If-None-Match") with ETag → 304 (headers only).                        │
+│ 11. If-Modified-Since: parse with strptime(..., "%a, %d %b %Y %H:%M:%S GMT", ...) +                                  │
+│ timegm; if st.st_mtime <= ims_time → 304 (headers only).                                                             │
+│ 12. Range parsing: parse Range: bytes=N-M (support N-, -M, N-M). Clamp to file size.                                 │
+│ Invalid range → 416 with Content-Range: bytes */size. Valid → has_range=1, status=206.                               │
+│ 13. open(full_path, O_RDONLY) → 500 on failure.                                                                      │
+│ 14. Format Last-Modified with gmtime_r + strftime.                                                                   │
+│ 15. Write HTTP response headers directly to req->fd:                                                                 │
+│ HTTP/1.1 {200|206} {OK|Partial Content}\r\n                                                                          │
+│ Content-Type: {mime}\r\n                                                                                             │
+│ Content-Length: {bytes}\r\n                                                                                          │
+│ ETag: {etag}\r\n                                                                                                     │
+│ Last-Modified: {date}\r\n                                                                                            │
+│ Accept-Ranges: bytes\r\n                                                                                             │
+│ [Content-Range: bytes start-end/total\r\n]   ← 206 only                                                              │
+│ Access-Control-Allow-Origin: http://localhost:8081\r\n                                                               │
+│ Access-Control-Allow-Credentials: true\r\n                                                                           │
+│ Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n                                             │
+│ Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n                                                │
+│ \r\n                                                                                                                 │
+│ 16. If GET (not HEAD): sendfile() loop from range_start for content_length bytes.                                    │
+│ 17. close(file_fd), res->status = 0.                                                                                 │
+│                                                                                                                      │
+│ 304 response helper (inline in static.c): writes 304 Not Modified + ETag + CORS + \r\n                               │
+│ directly to fd.                                                                                                      │
+│                                                                                                                      │
+│ Error response helper (inline in static.c): writes a minimal HTTP/1.1 {N} {text}\r\n...\r\n                          │
+│ directly to fd.                                                                                                      │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ 5. src/main.c — route registration                                                                                   │
+│                                                                                                                      │
+│ Add include: #include "routes/static.h"                                                                              │
+│                                                                                                                      │
+│ Register after the existing NAS routes:                                                                              │
+│ /* Static file server — public */                                                                                    │
+│ CHTTP_STREAM_GET(&srv, "/static/*", handle_static);                                                                  │
+│ CHTTP_HEAD(&srv,        "/static/*", handle_static);                                                                 │
+│                                                                                                                      │
+│ ---                                                                                                                  │
+│ Verification                                                                                                         │
+│                                                                                                                      │
+│ mkdir -p www/js www/css                                                                                              │
+│ echo '<html><body>Hello</body></html>' > www/index.html                                                              │
+│ echo 'body { color: red; }' > www/css/style.css                                                                      │
+│ echo 'console.log("hi");' > www/js/app.js                                                                            │
+│                                                                                                                      │
+│ make clean && make   # expect zero warnings                                                                          │
+│                                                                                                                      │
+│ sudo ./dist/server &                                                                                                 │
+│                                                                                                                      │
+│ # Basic GET (nested path)                                                                                            │
+│ curl -sv http://localhost:8080/static/css/style.css                                                                  │
+│ curl -sv http://localhost:8080/static/js/app.js                                                                      │
+│                                                                                                                      │
+│ # Directory index                                                                                                    │
+│ curl -sv http://localhost:8080/static/                                                                               │
+│ # → serves www/index.html                                                                                            │
+│                                                                                                                      │
+│ # HEAD (no body, but Content-Length present)                                                                         │
+│ curl -sI http://localhost:8080/static/css/style.css                                                                  │
+│                                                                                                                      │
+│ # Conditional — ETag (expect 304)                                                                                    │
+│ ETAG=$(curl -sI http://localhost:8080/static/js/app.js | grep -i etag | awk '{print $2}' | tr -d $'\r')              │
+│ curl -sv -H "If-None-Match: $ETAG" http://localhost:8080/static/js/app.js                                            │
+│                                                                                                                      │
+│ # Conditional — If-Modified-Since (expect 304)                                                                       │
+│ LM=$(curl -sI http://localhost:8080/static/js/app.js | grep -i last-modified | cut -d' ' -f2- | tr -d $'\r')         │
+│ curl -sv -H "If-Modified-Since: $LM" http://localhost:8080/static/js/app.js                                          │
+│                                                                                                                      │
+│ # Range request (expect 206)                                                                                         │
+│ curl -sv -H "Range: bytes=0-3" http://localhost:8080/static/css/style.css                                            │
+│                                                                                                                      │
+│ # Path traversal (expect 400)                                                                                        │
+│ curl -sv "http://localhost:8080/static/../../etc/passwd"                                                             │
+│ curl -sv "http://localhost:8080/static/%2e%2e/etc/passwd"                                                            │
+│                                                                                                                      │
+│ kill %1                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

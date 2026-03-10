@@ -177,6 +177,10 @@ int chttp_match_route(const char *pattern, const char *path,
         const char *u_end = strchr(u, '/');
         if (!u_end) u_end = u + strlen(u);
 
+        /* Trailing '*' matches the rest of the URL path including slashes */
+        if (p_end == p + 1 && *p == '*' && *p_end == '\0')
+            return 1;
+
         if (*p == ':') {
             /* Capture wildcard segment */
             if (*count < CHTTP_MAX_PATH_PARAMS) {
