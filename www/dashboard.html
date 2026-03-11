@@ -2,205 +2,141 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dashboard</title>
-
 <style>
 
-*{
-box-sizing:border-box;
-margin:0;
-padding:0;
-font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
 
 body{
-
-height:100vh;
+min-height:100vh;
 display:flex;
 align-items:center;
 justify-content:center;
-
+padding:20px;
 background:
-radial-gradient(circle at 20% 20%, #1e293b 0%, transparent 40%),
-radial-gradient(circle at 80% 80%, #312e81 0%, transparent 40%),
-#020617;
-
+  radial-gradient(circle at 20% 20%, #1e293b 0%, transparent 40%),
+  radial-gradient(circle at 80% 80%, #312e81 0%, transparent 40%),
+  #020617;
 color:white;
 }
 
 .card{
-
-width:420px;
-padding:35px;
-
+width:100%;
+max-width:420px;
 border-radius:14px;
-
-background:rgba(30,41,59,0.75);
+background:rgba(30,41,59,0.8);
 backdrop-filter:blur(10px);
-
-border:1px solid rgba(255,255,255,0.05);
-
-box-shadow:0 20px 60px rgba(0,0,0,0.7);
-
+border:1px solid rgba(255,255,255,0.07);
+box-shadow:0 20px 60px rgba(0,0,0,0.6);
+overflow:hidden;
 }
 
-h1{
-text-align:center;
-margin-bottom:25px;
-font-size:26px;
+.card-header{
+display:flex;
+align-items:center;
+justify-content:space-between;
+padding:22px 28px;
+border-bottom:1px solid rgba(255,255,255,0.06);
 }
 
-.info{
-margin-bottom:20px;
+.card-title{font-size:18px;font-weight:700;}
+
+.btn-logout{
+padding:7px 16px;
+border:none;
+border-radius:7px;
+background:rgba(239,68,68,.15);
+color:#f87171;
+font-weight:600;
+font-size:13px;
+cursor:pointer;
+transition:background .15s;
+border:1px solid rgba(239,68,68,.2);
+}
+.btn-logout:hover{background:rgba(239,68,68,.25);}
+.btn-logout:disabled{opacity:.5;cursor:default;}
+
+.card-body{padding:24px 28px;}
+
+.welcome{
+font-size:20px;
+font-weight:600;
+margin-bottom:22px;
+color:#e2e8f0;
 }
 
 .row{
-
 display:flex;
 justify-content:space-between;
-
+align-items:baseline;
 padding:10px 0;
-
-border-bottom:1px solid #334155;
-
-}
-
-.key{
-color:#94a3b8;
-}
-
-.value{
-font-weight:500;
-}
-
-button{
-
-margin-top:20px;
-
-width:100%;
-padding:14px;
-
-border:none;
-border-radius:8px;
-
-background:#ef4444;
-color:white;
-
-font-weight:600;
-
-cursor:pointer;
-
-}
-
-button:hover{
-background:#dc2626;
-}
-
-.status{
-
-margin-top:10px;
-text-align:center;
+border-bottom:1px solid rgba(255,255,255,0.05);
 font-size:14px;
-color:#94a3b8;
-
+gap:16px;
 }
+.row:last-child{border-bottom:none;}
+
+.key{color:#64748b;flex-shrink:0;}
+.value{font-family:'SF Mono',ui-monospace,monospace;color:#cbd5e1;word-break:break-all;text-align:right;}
+
+.loading{color:#475569;font-size:14px;padding:28px;text-align:center;}
 
 </style>
 </head>
-
 <body>
 
 <div class="card">
-
-<h1>Dashboard</h1>
-
-<div id="userInfo" class="info">
-Loading user info...
-</div>
-
-<button id="logoutBtn">Logout</button>
-
-<div class="status" id="status"></div>
-
+  <div class="card-header">
+    <span class="card-title">Dashboard</span>
+    <button class="btn-logout" id="logoutBtn">Logout</button>
+  </div>
+  <div id="content" class="loading">Loading…</div>
 </div>
 
 <script>
 
-async function loadUser(){
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-try{
+async function loadUser() {
+  const content = document.getElementById('content');
+  try {
+    const res = await fetch('/whoami');
+    if (!res.ok) { window.location.href = '/login.html'; return; }
+    const u = await res.json();
 
-const res = await fetch("/whoami",{
-credentials:"include"
+    const LABELS = { uid:'UID', gid:'GID', username:'Username', home:'Home', shell:'Shell', cwd:'CWD' };
+
+    content.className = 'card-body';
+    content.innerHTML = `
+      <div class="welcome">Welcome, ${esc(u.username)}</div>
+      <div>
+        ${Object.entries(LABELS).map(([k, label]) =>
+          u[k] !== undefined
+            ? `<div class="row"><span class="key">${label}</span><span class="value">${esc(String(u[k]))}</span></div>`
+            : ''
+        ).join('')}
+      </div>`;
+  } catch {
+    window.location.href = '/login.html';
+  }
+}
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('logoutBtn');
+  btn.disabled = true;
+  btn.textContent = 'Logging out…';
+  try {
+    await fetch('/logout', { method: 'DELETE' });
+  } finally {
+    window.location.href = '/login.html';
+  }
 });
-
-if(!res.ok){
-window.location="/login.html";
-return;
-}
-
-const data = await res.json();
-
-const container = document.getElementById("userInfo");
-
-container.innerHTML = "";
-
-for(const key in data){
-
-const row = document.createElement("div");
-row.className = "row";
-
-row.innerHTML = `
-<div class="key">${key}</div>
-<div class="value">${data[key]}</div>
-`;
-
-container.appendChild(row);
-
-}
-
-}catch(err){
-
-document.getElementById("userInfo").innerText = "Failed to load user info";
-
-}
-
-}
 
 loadUser();
 
-/* logout */
-
-document.getElementById("logoutBtn").onclick = async () => {
-
-const status = document.getElementById("status");
-
-status.textContent = "Logging out...";
-
-try{
-
-const res = await fetch("/logout",{
-
-method:"DELETE",
-credentials:"include"
-
-});
-
-if(res.ok){
-window.location="/login.html";
-}else{
-status.textContent="Logout failed";
-}
-
-}catch(err){
-
-status.textContent="Connection error";
-
-}
-
-};
-
 </script>
-
 </body>
 </html>
