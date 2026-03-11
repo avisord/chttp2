@@ -1,0 +1,75 @@
+when i do a curl request for audio or video its works fine:
+
+➜  chttp2 git:(main) curl 'http://localhost:8080/static/tmp/Mahabharat_x_MemoryReboot_v2.mp3' \
+  -H 'Upgrade-Insecure-Requests: 1' \
+  -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+  -H 'sec-ch-ua: "Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "Linux"' -o tmp/audio.mp3
+
+but when i do it with browser server crashes i am not sure why 
+
+---
+
+● Let me look at what the browser does differently from curl — browsers send Range requests for media and also check
+  MIME types strictly:
+
+● Read 1 file (ctrl+o to expand)
+
+● MIME types are fine. The issue is almost certainly in the connection lifecycle. Let me check connection_thread:
+
+● Read 1 file (ctrl+o to expand)
+
+● Let me check chttp_write_response to see if it sends Connection: close:
+
+● Read 1 file (ctrl+o to expand)
+
+● Found it. The server handles one request per connection then calls close(fd) — but the response headers never include
+  Connection: close. For HTTP/1.1 clients (browsers), the default assumption is keep-alive, so the browser tries to send
+   a second range request on the same socket. The server has already closed it with unread data still in the receive
+  buffer, which causes the kernel to send TCP RST instead of a graceful FIN. RST discards all buffered data — including
+  response data the browser hadn't finished reading — breaking media playback.
+
+  curl works because it makes one request and doesn't attempt connection reuse.
+
+  The fix: add Connection: close to every response from the static handler:
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(src/routes/static.c)
+  ⎿  Added 2 lines, removed 1 line
+      23      "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+      24      "Access-Control-Allow-Credentials: true\r\n"
+      25      "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
+      26 -    "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n";
+      26 +    "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
+      27 +    "Connection: close\r\n";  /* server is HTTP/1.0-style; tell browser not to reuse */
+      28
+      29  static void send_error(int fd, int code, const char *text) {
+      30      char buf[512];
+
+● Now the 301 redirect and 416 error also need it — they construct their own buffers inline:
+
+● Read 1 file (ctrl+o to expand)
+
+● Good — the 301 redirect already uses CORS which now includes Connection: close. Same for the 416 response. All paths
+  through the handler now send Connection: close via the CORS constant. Let me verify:
+
+● Bash(make 2>&1)
+  ⎿  gcc -Wall -Wextra -I src -I lib -I vendor -MMD -MP -c src/routes/static.c -o build/src/routes/static.o
+     gcc  build/src/routes/static.o  build/src/routes/routes.o  build/src/auth/auth.o  build/src/auth/session.o  bu
+     ild/src/utils/utils.o  build/src/main.o  build/src/fs/fs.o  build/lib/chttp.o  build/vendor/cJSON.o  build/ven
+     dor/sha256.o -lpthread -lpam -o dist/server
+
+● Zero warnings.
+
+  Root cause explained: The server processes one request per connection then calls close(fd). When Chrome requests
+  audio/video it sends subsequent range requests on the same TCP connection (HTTP/1.1 keep-alive is the default).
+  Without Connection: close in the response, Chrome doesn't know the server won't reuse the connection, so it may send
+  request #2 before receiving the TCP FIN for request #1. The server closes the socket with that unread data still in
+  the receive buffer — Linux kernel sends TCP RST (not FIN). RST causes Chrome to discard all buffered data including
+  the in-flight response, breaking playback.
+
+  Fix: Connection: close is now appended to the CORS constant, so every response from handle_static (200, 206, 301, 304,
+   4xx) tells the browser to open a fresh connection for each request. curl wasn't affected because it makes one request
+   and disconnects.

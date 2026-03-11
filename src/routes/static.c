@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
@@ -23,7 +24,8 @@ static const char CORS[] =
     "Access-Control-Allow-Origin: http://localhost:8081\r\n"
     "Access-Control-Allow-Credentials: true\r\n"
     "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
-    "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n";
+    "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
+    "Connection: close\r\n";  /* server is HTTP/1.0-style; tell browser not to reuse */
 
 static void send_error(int fd, int code, const char *text) {
     char buf[512];
@@ -48,6 +50,13 @@ static void send_304(int fd, const char *etag) {
 }
 
 void handle_static(HttpRequest *req, HttpResponse *res) {
+    const char *range_in  = chttp_header(req, "Range");
+    const char *inm_in    = chttp_header(req, "If-None-Match");
+    printf("[static] %s %s | Range: %s | INM: %s\n",
+           req->method, req->path,
+           range_in  ? range_in  : "(none)",
+           inm_in    ? inm_in    : "(none)");
+
     /* Strip known prefix: "/static/" or fall back to skipping leading "/" */
     const char *rel_raw;
     if (strncmp(req->path, "/static/", 8) == 0)
@@ -61,6 +70,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
 
     /* Reject path traversal */
     if (strstr(rel_decoded, "..")) {
+        printf("[static] 400 path traversal attempt: '%s'\n", rel_decoded);
         send_error(req->fd, 400, "Bad Request");
         res->status = 0;
         return;
@@ -72,6 +82,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
 
     struct stat st;
     if (stat(full_path, &st) < 0) {
+        printf("[static] 404 stat('%s'): %s\n", full_path, strerror(errno));
         send_error(req->fd, 404, "Not Found");
         res->status = 0;
         return;
@@ -79,6 +90,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
 
     /* Directory without trailing slash: redirect so relative URLs work */
     if (S_ISDIR(st.st_mode) && req->path[strlen(req->path) - 1] != '/') {
+        printf("[static] 301 dir redirect: %s -> %s/\n", req->path, req->path);
         char rbuf[512];
         int n = snprintf(rbuf, sizeof(rbuf),
             "HTTP/1.1 301 Moved Permanently\r\n"
@@ -97,12 +109,15 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
         char idx[PATH_MAX];
         snprintf(idx, sizeof(idx), "%s/index.html", full_path);
         if (stat(idx, &st) == 0 && S_ISREG(st.st_mode)) {
+            printf("[static] dir index: %s -> %s\n", full_path, idx);
             memcpy(full_path, idx, sizeof(full_path));
         } else {
             snprintf(idx, sizeof(idx), "%s/index.htm", full_path);
             if (stat(idx, &st) == 0 && S_ISREG(st.st_mode)) {
+                printf("[static] dir index: %s -> %s\n", full_path, idx);
                 memcpy(full_path, idx, sizeof(full_path));
             } else {
+                printf("[static] 403 no index in dir: %s\n", full_path);
                 send_error(req->fd, 403, "Forbidden");
                 res->status = 0;
                 return;
@@ -112,6 +127,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
 
     /* Must be a regular file */
     if (!S_ISREG(st.st_mode)) {
+        printf("[static] 404 not a regular file: %s (mode=%o)\n", full_path, st.st_mode);
         send_error(req->fd, 404, "Not Found");
         res->status = 0;
         return;
@@ -120,6 +136,8 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* realpath check: prevent symlink escape outside www/ */
     char root_rp[PATH_MAX], file_rp[PATH_MAX];
     if (!realpath(STATIC_ROOT, root_rp) || !realpath(full_path, file_rp)) {
+        printf("[static] 404 realpath failed: root='%s' file='%s': %s\n",
+               STATIC_ROOT, full_path, strerror(errno));
         send_error(req->fd, 404, "Not Found");
         res->status = 0;
         return;
@@ -127,6 +145,8 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     size_t root_len = strlen(root_rp);
     if (strncmp(file_rp, root_rp, root_len) != 0 ||
         (file_rp[root_len] != '/' && file_rp[root_len] != '\0')) {
+        printf("[static] 403 symlink escape: '%s' -> '%s' outside root '%s'\n",
+               full_path, file_rp, root_rp);
         send_error(req->fd, 403, "Forbidden");
         res->status = 0;
         return;
@@ -140,6 +160,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* If-None-Match */
     const char *inm = chttp_header(req, "If-None-Match");
     if (inm && strcmp(inm, etag) == 0) {
+        printf("[static] 304 ETag match: %s %s\n", etag, full_path);
         send_304(req->fd, etag);
         res->status = 0;
         return;
@@ -152,6 +173,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
         if (strptime(ims_str, "%a, %d %b %Y %H:%M:%S GMT", &tm_ims)) {
             time_t ims_time = timegm(&tm_ims);
             if (st.st_mtime <= ims_time) {
+                printf("[static] 304 not modified: %s\n", full_path);
                 send_304(req->fd, etag);
                 res->status = 0;
                 return;
@@ -191,6 +213,8 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
             if (range_end >= st.st_size) range_end = st.st_size - 1;
 
             if (range_start > range_end || range_start >= st.st_size) {
+                printf("[static] 416 bad range '%s' for file size %lld: %s\n",
+                       range_hdr, (long long)st.st_size, full_path);
                 char buf[512];
                 int n = snprintf(buf, sizeof(buf),
                     "HTTP/1.1 416 Range Not Satisfiable\r\n"
@@ -214,6 +238,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* Open file */
     int file_fd = open(full_path, O_RDONLY);
     if (file_fd < 0) {
+        printf("[static] 500 open('%s'): %s\n", full_path, strerror(errno));
         send_error(req->fd, 500, "Internal Server Error");
         res->status = 0;
         return;
@@ -229,6 +254,15 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* MIME type */
     const char *mime = mime_from_ext(full_path);
     if (!mime) mime = "application/octet-stream";
+
+    if (has_range)
+        printf("[static] %d %s bytes=%lld-%lld/%lld mime=%s fd=%d\n",
+               status_code, full_path,
+               (long long)range_start, (long long)range_end, (long long)st.st_size,
+               mime, req->fd);
+    else
+        printf("[static] %d %s size=%lld mime=%s fd=%d\n",
+               status_code, full_path, (long long)st.st_size, mime, req->fd);
 
     /* Write response headers */
     char hbuf[1024];
@@ -276,9 +310,18 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
         off_t remaining = content_length;
         while (remaining > 0) {
             ssize_t sent = sendfile(req->fd, file_fd, &offset, (size_t)remaining);
-            if (sent <= 0) break;
+            if (sent <= 0) {
+                printf("[static] sendfile interrupted: sent=%zd remaining=%lld errno=%d(%s) file=%s fd=%d\n",
+                       sent, (long long)remaining, errno, strerror(errno), full_path, req->fd);
+                break;
+            }
             remaining -= sent;
         }
+        if (remaining == 0)
+            printf("[static] done: %s -> fd=%d (%lld bytes)\n",
+                   full_path, req->fd, (long long)content_length);
+    } else {
+        printf("[static] HEAD done: %s fd=%d\n", full_path, req->fd);
     }
 
     close(file_fd);

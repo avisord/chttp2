@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -731,6 +732,10 @@ static void *connection_thread(void *arg) {
 }
 
 int chttp_server_init(HttpServer *srv, int port) {
+    /* Ignore SIGPIPE so write/sendfile return -1/EPIPE instead of killing
+     * the process when a client closes the connection mid-transfer. */
+    signal(SIGPIPE, SIG_IGN);
+
     memset(srv, 0, sizeof(*srv));
     srv->port          = port;
     srv->max_body_size = 64 * 1024 * 1024; /* 64 MB default; set to 0 for unlimited */
