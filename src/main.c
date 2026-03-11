@@ -46,18 +46,20 @@ int main(void) {
   /* Expose the listening fd so forked children can close it. */
   g_server_fd = srv.server_fd;
 
-  CHTTP_POST(&srv, "/login", handle_login);
-//CHTTP_GET(&srv, "/", handle_root);
-//CHTTP_GET(&srv, "/hello", handle_hello);
-//CHTTP_GET(&srv, "/users/:id", handle_get_user);
-//CHTTP_POST(&srv, "/users", handle_create_user);
-//CHTTP_GET(&srv, "/echo", handle_echo);
-//CHTTP_POST(&srv, "/upload", handle_upload);
-//CHTTP_WS(&srv, "/socket", handle_socket);
-//CHTTP_SSE(&srv, "/sse", handle_sse);
-//CHTTP_GET(&srv, "/fdownload/:filename", handle_download);
-//CHTTP_GET(&srv, "/fmetadata/:filename", handle_fmetadata);
+  /* Test Routes - not needed anymore */
+  //CHTTP_GET(&srv, "/", handle_root);
+  //CHTTP_GET(&srv, "/hello", handle_hello);
+  //CHTTP_GET(&srv, "/users/:id", handle_get_user);
+  //CHTTP_POST(&srv, "/users", handle_create_user);
+  //CHTTP_GET(&srv, "/echo", handle_echo);
+  //CHTTP_POST(&srv, "/upload", handle_upload);
+  //CHTTP_WS(&srv, "/socket", handle_socket);
+  //CHTTP_SSE(&srv, "/sse", handle_sse);
+  //CHTTP_GET(&srv, "/fdownload/:filename", handle_download);
+  //CHTTP_GET(&srv, "/fmetadata/:filename", handle_fmetadata);
+
   /* Authenticated — runs handler in a forked child under user privileges */
+  CHTTP_POST(&srv, "/login", handle_login);
   CHTTP_GET(&srv, "/whoami", handle_whoami);
 
   /* NAS File Management API — all authenticated */
