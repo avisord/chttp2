@@ -120,12 +120,22 @@ void handle_login(HttpRequest *req, HttpResponse *res) {
     chttp_send_json(res, "{\"error\":\"Failed to create session\"}");
     return;
   }
-  cJSON_Delete(json);
 
-  char cookie_val[128];
-  snprintf(cookie_val, sizeof(cookie_val),
-           "session=%s; HttpOnly; Path=/; SameSite=Lax", session_id);
-  chttp_set_header(res, "Set-Cookie", cookie_val);
+  char cookie1[256];
+  snprintf(cookie1, sizeof(cookie1),
+           "session_%s=%s; HttpOnly; Path=/; SameSite=Lax",
+           j_user->valuestring, session_id);
+  chttp_add_header(res, "Set-Cookie", cookie1);
+
+  char cookie2[256];
+  snprintf(cookie2, sizeof(cookie2),
+           "active_session=%s/%s; HttpOnly; Path=/; SameSite=Lax",
+           session_id, j_user->valuestring);
+  printf("cookie2: %s\n", cookie2);
+  printf("cookie1: %s\n", cookie1);
+  chttp_add_header(res, "Set-Cookie", cookie2);
+
+  cJSON_Delete(json);
 
   chttp_send_json(res, "{\"message\":\"Login successful\"}");
 }

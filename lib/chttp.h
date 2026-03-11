@@ -99,6 +99,7 @@ void        chttp_url_decode(const char *src, char *dst, size_t dst_size);
 /* Response building */
 void chttp_set_status(HttpResponse *res, int code);
 void chttp_set_header(HttpResponse *res, const char *key, const char *val);
+void chttp_add_header(HttpResponse *res, const char *key, const char *val); /* append without dedup — use for Set-Cookie */
 void chttp_send_text(HttpResponse *res, const char *text);
 void chttp_send_json(HttpResponse *res, const char *json_str);
 void chttp_send_cjson(HttpResponse *res, cJSON *obj);

@@ -5,13 +5,18 @@
 #include "auth/auth.h"
 #include "fs/fs.h"
 #include "routes/routes.h"
+#include "routes/session_mgmt.h"
 #include "routes/static.h"
 
 int g_server_fd = -1;
 
 /* Auth wrappers — each generates a static RouteHandler that validates the
- * session cookie then calls fork_and_run() with the _impl function. */
+ * active_session cookie then calls fork_and_run() with the _impl function. */
 DEFINE_AUTH_ROUTE(handle_whoami,        handle_whoami_impl)
+
+/* Logout needs active_session to know which session to remove. */
+DEFINE_NOPRIV_AUTH_ROUTE(handle_logout, handle_logout_impl)
+
 DEFINE_AUTH_ROUTE(handle_fs_list,        handle_fs_list_impl)
 DEFINE_AUTH_ROUTE(handle_fs_upload,      handle_fs_upload_impl)
 DEFINE_STREAM_AUTH_ROUTE(handle_fs_download, handle_fs_download_impl)
@@ -59,8 +64,14 @@ int main(void) {
   //CHTTP_GET(&srv, "/fmetadata/:filename", handle_fmetadata);
 
   /* Authenticated — runs handler in a forked child under user privileges */
-  CHTTP_POST(&srv, "/login", handle_login);
-  CHTTP_GET(&srv, "/whoami", handle_whoami);
+  CHTTP_POST(&srv,   "/login",                          handle_login);
+  CHTTP_GET(&srv,    "/whoami",                         handle_whoami);
+
+  /* Session management */
+  CHTTP_GET(&srv,    "/sessions",                       handle_get_sessions_impl);
+  CHTTP_DELETE(&srv, "/sessions/:session_id",           handle_delete_session_impl);
+  CHTTP_DELETE(&srv, "/logout",                         handle_logout);           /* needs active_session */
+  CHTTP_POST(&srv,   "/sessions/switch/:session_id",    handle_switch_session_impl);
 
   /* NAS File Management API — all authenticated */
   CHTTP_GET(&srv,    "/fs/list",     handle_fs_list);

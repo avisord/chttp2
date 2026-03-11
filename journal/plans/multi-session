@@ -1,0 +1,34 @@
+multi session auth:
+
+- platform should support multiple sessions at a time
+- like this on client:  
+  - http only cookie: session_<user>=<token>
+
+- active session will also be stored in cookie in this format:
+  - http only cookie: active_session=<token>/<user>
+  - this will be used to select the active session for the current request
+
+- in server sessions will be as ususal stored in sessions/ dir and name will be 
+  session_<session_id> (which is currently working)
+
+- /whoami will return details based on active session
+
+- setuid() and setgid() will be used to drop privileges to the user based on current session
+
+- new apis to be added:
+  - GET /sessions
+    - will return a list of all active sessions and its basic details:
+    - resoponse format {session_id, username, expiry_time, last_acces_time}[]
+  - DELETE /sessions/<session_id>
+    - will delete the session and all its data
+  - DELETE /logout
+    - will delete the active session cookie
+  - POST /sessions/switch/<session_id>
+    - will switch the active session cookie to the new session
+
+---
+
+frontend:
+
+- we need to show:
+  - danger outline when root session is active

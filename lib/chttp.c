@@ -611,6 +611,13 @@ void chttp_set_header(HttpResponse *res, const char *key, const char *val) {
     strncpy(h->value, val, sizeof(h->value) - 1);
 }
 
+void chttp_add_header(HttpResponse *res, const char *key, const char *val) {
+    if (res->header_count >= CHTTP_MAX_HEADERS) return;
+    HttpKV *h = &res->headers[res->header_count++];
+    strncpy(h->key,   key, sizeof(h->key)   - 1);
+    strncpy(h->value, val, sizeof(h->value) - 1);
+}
+
 void chttp_send_text(HttpResponse *res, const char *text) {
     chttp_set_header(res, "Content-Type", "text/plain");
     size_t len = strlen(text);
