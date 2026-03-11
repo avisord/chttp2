@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Login</title>
+
+<style>
+
+*{
+box-sizing:border-box;
+margin:0;
+padding:0;
+font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+
+body{
+height:100vh;
+display:flex;
+align-items:center;
+justify-content:center;
+
+background:
+radial-gradient(circle at 20% 20%, #1e293b 0%, transparent 40%),
+radial-gradient(circle at 80% 80%, #312e81 0%, transparent 40%),
+#020617;
+
+color:white;
+}
+
+.wrapper{
+display:flex;
+gap:40px;
+align-items:flex-start;
+}
+
+.card{
+
+width:360px;
+padding:40px;
+
+border-radius:14px;
+
+background:rgba(30,41,59,0.75);
+backdrop-filter:blur(10px);
+
+border:1px solid rgba(255,255,255,0.05);
+
+box-shadow:0 20px 60px rgba(0,0,0,0.7);
+
+}
+
+h1{
+text-align:center;
+margin-bottom:25px;
+font-size:26px;
+}
+
+input{
+
+width:100%;
+padding:14px;
+
+border-radius:8px;
+border:1px solid #334155;
+
+background:#020617;
+
+color:white;
+font-size:14px;
+
+margin-bottom:15px;
+}
+
+input:focus{
+outline:none;
+border-color:#6366f1;
+box-shadow:0 0 0 1px #6366f1;
+}
+
+button{
+
+width:100%;
+padding:14px;
+
+border:none;
+border-radius:8px;
+
+background:#6366f1;
+color:white;
+
+font-weight:600;
+
+cursor:pointer;
+}
+
+button:hover{
+background:#4f46e5;
+}
+
+.status{
+margin-top:10px;
+font-size:14px;
+text-align:center;
+color:#94a3b8;
+}
+
+/* sessions */
+
+.sessions{
+
+width:420px;
+
+background:rgba(30,41,59,0.75);
+backdrop-filter:blur(10px);
+
+border-radius:14px;
+border:1px solid rgba(255,255,255,0.05);
+
+padding:25px;
+
+box-shadow:0 20px 60px rgba(0,0,0,0.7);
+
+}
+
+.sessions h2{
+margin-bottom:15px;
+font-size:20px;
+}
+
+.session{
+
+display:flex;
+justify-content:space-between;
+align-items:center;
+
+padding:12px;
+border-radius:8px;
+
+background:#020617;
+
+border:1px solid #334155;
+
+margin-bottom:10px;
+
+transition:all .15s ease;
+}
+
+.session:hover{
+border-color:#6366f1;
+}
+
+.session-info{
+cursor:pointer;
+}
+
+.session-user{
+font-weight:600;
+}
+
+.session-time{
+font-size:12px;
+color:#94a3b8;
+margin-top:3px;
+}
+
+.logout-btn{
+
+background:#ef4444;
+border:none;
+
+padding:6px 10px;
+
+border-radius:6px;
+
+font-size:12px;
+
+cursor:pointer;
+}
+
+.logout-btn:hover{
+background:#dc2626;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="wrapper">
+
+<div class="card">
+
+<h1>Login</h1>
+
+<form id="loginForm">
+
+<input id="username" placeholder="Username" required>
+<input id="password" type="password" placeholder="Password" required>
+
+<button>Login</button>
+
+<div class="status" id="status"></div>
+
+</form>
+
+</div>
+
+<div class="sessions">
+
+<h2>Active Sessions</h2>
+
+<div id="sessionsList">
+Loading sessions...
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+function formatTime(ts){
+const d=new Date(ts*1000);
+return d.toLocaleString();
+}
+
+/* load sessions */
+
+async function loadSessions(){
+
+try{
+
+const res=await fetch("/sessions",{credentials:"include"});
+const sessions=await res.json();
+
+const container=document.getElementById("sessionsList");
+container.innerHTML="";
+
+sessions.forEach(s=>{
+
+const div=document.createElement("div");
+div.className="session";
+
+div.innerHTML=`
+
+<div class="session-info">
+<div class="session-user">${s.username}</div>
+<div class="session-time">
+Last access: ${formatTime(s.last_access_time)}
+</div>
+</div>
+
+<button class="logout-btn">Logout</button>
+
+`;
+
+/* switch session */
+
+div.querySelector(".session-info").onclick=async()=>{
+
+const res=await fetch(`/sessions/switch/${s.session_id}`,{
+
+method:"POST",
+credentials:"include"
+
+});
+
+if(res.ok){
+window.location="/dashboard.html";
+}
+
+};
+
+/* delete session */
+
+div.querySelector(".logout-btn").onclick=async(e)=>{
+
+e.stopPropagation();
+
+await fetch(`/sessions/${s.session_id}`,{
+
+method:"DELETE",
+credentials:"include"
+
+});
+
+loadSessions();
+
+};
+
+container.appendChild(div);
+
+});
+
+}catch(err){
+
+document.getElementById("sessionsList").innerText="Failed to load sessions";
+
+}
+
+}
+
+loadSessions();
+
+/* login */
+
+const form=document.getElementById("loginForm");
+const status=document.getElementById("status");
+
+form.addEventListener("submit",async(e)=>{
+
+e.preventDefault();
+
+const username=document.getElementById("username").value;
+const password=document.getElementById("password").value;
+
+status.textContent="Authenticating...";
+
+try{
+
+const res=await fetch("/login",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json"
+},
+
+credentials:"include",
+
+body:JSON.stringify({username,password})
+
+});
+
+if(res.ok){
+
+window.location="/dashboard.html";
+
+}else{
+
+status.textContent="Login failed";
+
+}
+
+}catch(err){
+
+status.textContent="Connection error";
+
+}
+
+});
+
+</script>
+
+</body>
+</html>
