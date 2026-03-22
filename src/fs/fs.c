@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -137,16 +136,10 @@ void handle_fs_download_impl(HttpRequest *req, HttpResponse *res) {
       "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
       "\r\n",
       mime_from_ext(fname), cd, (long long)st.st_size);
-  write(req->fd, hbuf, n);
+  chttp_conn_write(req->conn, hbuf, n);
 
-  /* Zero-copy kernel transfer: file → socket */
-  off_t offset = 0;
-  off_t remaining = st.st_size;
-  while (remaining > 0) {
-    ssize_t sent = sendfile(req->fd, file_fd, &offset, (size_t)remaining);
-    if (sent <= 0) break;   /* client disconnected — nothing to do */
-    remaining -= sent;
-  }
+  /* TLS-aware transfer: file → socket */
+  chttp_conn_sendfile(req->conn, file_fd, (size_t)st.st_size);
 
   close(file_fd);
   res->status = 0;  /* headers already sent — skip chttp_write_response */
@@ -478,7 +471,7 @@ void handle_fs_stream_upload_impl(HttpRequest *req, HttpResponse *res) {
     if (content_length - written < want)
       want = content_length - written;
 
-    int r = recv(req->fd, chunk, want, 0);
+    int r = (int)chttp_conn_recv(req->conn, chunk, want, 0);
     if (r <= 0) {
       fclose(f); unlink(path);
       chttp_set_status(res, 400);
@@ -967,7 +960,7 @@ void handle_fs_upload_chunk_impl(HttpRequest *req, HttpResponse *res) {
     while (drained < chunk_bytes) {
       size_t want = sizeof(drain);
       if (chunk_bytes - drained < want) want = chunk_bytes - drained;
-      int r = recv(req->fd, drain, want, 0);
+      int r = (int)chttp_conn_recv(req->conn, drain, want, 0);
       if (r <= 0) break;
       drained += (size_t)r;
     }
@@ -1003,7 +996,7 @@ void handle_fs_upload_chunk_impl(HttpRequest *req, HttpResponse *res) {
   /* Recv remaining bytes from socket */
   while (received < chunk_bytes) {
     size_t want = chunk_bytes - received;
-    int r = recv(req->fd, (char *)buf + received, want, 0);
+    int r = (int)chttp_conn_recv(req->conn, (char *)buf + received, want, 0);
     if (r <= 0) {
       free(buf); free(bs); cJSON_Delete(meta);
       chttp_set_status(res, 400);

@@ -2,6 +2,11 @@ CC      := gcc
 CFLAGS  := -Wall -Wextra -I src -I lib -I vendor
 LDFLAGS := -lpthread -lpam
 
+ifdef TLS
+CFLAGS  += -DCHTTP_TLS
+LDFLAGS += -lssl -lcrypto
+endif
+
 SRC_DIR    := src
 LIB_DIR    := lib
 VENDOR_DIR := vendor

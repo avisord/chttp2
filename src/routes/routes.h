@@ -10,6 +10,6 @@ void handle_login(HttpRequest *req, HttpResponse *res);
 void handle_upload(HttpRequest *req, HttpResponse *res);
 void handle_download(HttpRequest *req, HttpResponse *res);
 void handle_fmetadata(HttpRequest *req, HttpResponse *res);
-void handle_socket(int fd);
-void handle_sse(int fd);
+void handle_socket(CConn *conn);
+void handle_sse(CConn *conn);
 void handle_whoami_impl(HttpRequest *req, HttpResponse *res);

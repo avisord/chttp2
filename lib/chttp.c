@@ -9,9 +9,115 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sendfile.h>
 #include <unistd.h>
 
-/* ---- URL decode (ported from rpmi_server.c) ---- */
+#ifdef CHTTP_TLS
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif
+
+/* ---- CConn ---- */
+
+struct CConn {
+    int fd;
+#ifdef CHTTP_TLS
+    SSL *ssl; /* NULL when TLS not in use */
+#endif
+};
+
+static CConn *conn_alloc(int fd) {
+    CConn *c = calloc(1, sizeof(*c));
+    if (!c) return NULL;
+    c->fd = fd;
+    return c;
+}
+
+int chttp_conn_fd(CConn *conn) {
+    return conn->fd;
+}
+
+ssize_t chttp_conn_write(CConn *conn, const void *buf, size_t n) {
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        int r = SSL_write(conn->ssl, buf, (int)n);
+        return r > 0 ? r : -1;
+    }
+#endif
+    return write(conn->fd, buf, n);
+}
+
+ssize_t chttp_conn_recv(CConn *conn, void *buf, size_t n, int flags) {
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        /* SSL_read ignores flags; MSG_DONTWAIT callers get best-effort */
+        int r = SSL_read(conn->ssl, buf, (int)n);
+        return r > 0 ? r : -1;
+    }
+#endif
+    return recv(conn->fd, buf, n, flags);
+}
+
+int chttp_conn_sendfile(CConn *conn, int file_fd, size_t count) {
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        char buf[65536];
+        while (count > 0) {
+            size_t want = count < sizeof(buf) ? count : sizeof(buf);
+            ssize_t r = read(file_fd, buf, want);
+            if (r <= 0) return -1;
+            if (SSL_write(conn->ssl, buf, (int)r) <= 0) return -1;
+            count -= (size_t)r;
+        }
+        return 0;
+    }
+#endif
+    /* NULL offset: use file's current position (caller sets it via lseek). */
+    while (count > 0) {
+        ssize_t s = sendfile(conn->fd, file_fd, NULL, count);
+        if (s <= 0) return -1;
+        count -= (size_t)s;
+    }
+    return 0;
+}
+
+void chttp_conn_close(CConn *conn) {
+    if (!conn) return;
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        SSL_shutdown(conn->ssl);
+        SSL_free(conn->ssl);
+        conn->ssl = NULL;
+    }
+#endif
+    close(conn->fd);
+    free(conn);
+}
+
+void chttp_conn_free(CConn *conn) {
+    if (!conn) return;
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        SSL_free(conn->ssl); /* no shutdown — peer (child) still owns it */
+        conn->ssl = NULL;
+    }
+#endif
+    close(conn->fd);
+    free(conn);
+}
+
+/* Internal recv wrapper (used by body-reading code inside dispatch). */
+static ssize_t conn_recv_plain(CConn *conn, void *buf, size_t n) {
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        int r = SSL_read(conn->ssl, buf, (int)n);
+        return r > 0 ? r : -1;
+    }
+#endif
+    return recv(conn->fd, buf, n, 0);
+}
+
+/* ---- URL decode ---- */
 
 static char from_hex(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -345,7 +451,7 @@ static void base64_encode(const unsigned char *in, size_t len, char *out) {
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-static int ws_handshake(int fd, HttpRequest *req) {
+static int ws_handshake(CConn *conn, HttpRequest *req) {
     const char *key = chttp_header(req, "Sec-WebSocket-Key");
     if (!key) return -1;
 
@@ -364,24 +470,23 @@ static int ws_handshake(int fd, HttpRequest *req) {
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
-    write(fd, resp, n);
+    chttp_conn_write(conn, resp, n);
     return 0;
 }
 
 /* ---- WebSocket: frame I/O ---- */
 
-static int recv_exact(int fd, void *buf, size_t n) {
+static int recv_exact(CConn *conn, void *buf, size_t n) {
     size_t got = 0;
     while (got < n) {
-        int r = recv(fd, (char *)buf + got, n - got, 0);
+        ssize_t r = chttp_conn_recv(conn, (char *)buf + got, n - got, 0);
         if (r <= 0) return -1;
         got += (size_t)r;
     }
     return 0;
 }
 
-/* Send an unmasked text frame (server → client). */
-int chttp_ws_send(int fd, const char *payload, size_t len) {
+int chttp_ws_send(CConn *conn, const char *payload, size_t len) {
     unsigned char hdr[10];
     int hlen = 0;
     hdr[hlen++] = 0x81; /* FIN + opcode text */
@@ -396,16 +501,14 @@ int chttp_ws_send(int fd, const char *payload, size_t len) {
         for (int i = 7; i >= 0; i--)
             hdr[hlen++] = (unsigned char)((len >> (i * 8)) & 0xFF);
     }
-    if (write(fd, hdr, hlen) < 0) return -1;
-    if (write(fd, payload, len) < 0) return -1;
+    if (chttp_conn_write(conn, hdr, hlen) < 0) return -1;
+    if (chttp_conn_write(conn, payload, len) < 0) return -1;
     return 0;
 }
 
-/* Read one masked frame from client. Handles ping/close internally.
- * Returns: number of payload bytes (≥1), 0 if ping was handled, -1 on close/error. */
-int chttp_ws_recv(int fd, char *buf, size_t bufsize) {
+int chttp_ws_recv(CConn *conn, char *buf, size_t bufsize) {
     unsigned char hdr[2];
-    if (recv_exact(fd, hdr, 2) < 0) return -1;
+    if (recv_exact(conn, hdr, 2) < 0) return -1;
 
     int opcode = hdr[0] & 0x0F;
     int masked  = (hdr[1] >> 7) & 1;
@@ -413,35 +516,35 @@ int chttp_ws_recv(int fd, char *buf, size_t bufsize) {
 
     if (plen == 126) {
         unsigned char ext[2];
-        if (recv_exact(fd, ext, 2) < 0) return -1;
+        if (recv_exact(conn, ext, 2) < 0) return -1;
         plen = ((size_t)ext[0] << 8) | ext[1];
     } else if (plen == 127) {
         unsigned char ext[8];
-        if (recv_exact(fd, ext, 8) < 0) return -1;
+        if (recv_exact(conn, ext, 8) < 0) return -1;
         plen = 0;
         for (int i = 0; i < 8; i++) plen = (plen << 8) | ext[i];
     }
 
     unsigned char mask[4] = {0};
-    if (masked && recv_exact(fd, mask, 4) < 0) return -1;
+    if (masked && recv_exact(conn, mask, 4) < 0) return -1;
 
     if (opcode == 0x8) { /* Close — echo close frame */
         unsigned char close_frame[2] = {0x88, 0x00};
-        write(fd, close_frame, 2);
+        chttp_conn_write(conn, close_frame, 2);
         return -1;
     }
 
     if (plen >= bufsize) return -1; /* frame too large */
 
-    if (plen > 0 && recv_exact(fd, buf, plen) < 0) return -1;
+    if (plen > 0 && recv_exact(conn, buf, plen) < 0) return -1;
     if (masked)
         for (size_t i = 0; i < plen; i++) buf[i] ^= mask[i % 4];
     buf[plen] = '\0';
 
     if (opcode == 0x9) { /* Ping — send pong with same payload */
         unsigned char pong_hdr[2] = {0x8A, (unsigned char)plen};
-        write(fd, pong_hdr, 2);
-        if (plen > 0) write(fd, buf, plen);
+        chttp_conn_write(conn, pong_hdr, 2);
+        if (plen > 0) chttp_conn_write(conn, buf, plen);
         return 0;
     }
 
@@ -450,7 +553,7 @@ int chttp_ws_recv(int fd, char *buf, size_t bufsize) {
 
 /* ---- SSE helpers ---- */
 
-static int sse_start(int fd) {
+static int sse_start(CConn *conn) {
     static const char hdrs[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
@@ -458,22 +561,20 @@ static int sse_start(int fd) {
         "Connection: keep-alive\r\n"
         "Access-Control-Allow-Origin: *\r\n"
         "\r\n";
-    return write(fd, hdrs, sizeof(hdrs) - 1) < 0 ? -1 : 0;
+    return chttp_conn_write(conn, hdrs, sizeof(hdrs) - 1) < 0 ? -1 : 0;
 }
 
-/* Send one SSE event. event may be NULL for an anonymous data line.
- * Returns 0 on success, -1 if the client has disconnected. */
-int chttp_sse_send(int fd, const char *event, const char *data) {
+int chttp_sse_send(CConn *conn, const char *event, const char *data) {
     char buf[4096];
     int n;
     if (event)
         n = snprintf(buf, sizeof(buf), "event: %s\ndata: %s\n\n", event, data);
     else
         n = snprintf(buf, sizeof(buf), "data: %s\n\n", data);
-    return write(fd, buf, n) < 0 ? -1 : 0;
+    return chttp_conn_write(conn, buf, n) < 0 ? -1 : 0;
 }
 
-int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd) {
+int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, CConn *conn) {
     for (int i = 0; i < srv->route_count; i++) {
         Route *r = &srv->routes[i];
         if (strcmp(r->method, req->method) != 0) continue;
@@ -493,24 +594,21 @@ int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd)
                 chttp_send_text(res, "WebSocket upgrade required");
                 return 1;
             }
-            if (ws_handshake(fd, req) < 0) {
+            if (ws_handshake(conn, req) < 0) {
                 chttp_set_status(res, 400);
                 chttp_send_text(res, "WebSocket handshake failed");
                 return 1;
             }
-            r->ws_handler(fd);
-            return -1; /* fd owned by ws handler */
+            r->ws_handler(conn);
+            return -1; /* conn owned by ws handler */
         }
 
         if (r->sse_handler) {
-            if (sse_start(fd) < 0) return -1;
-            r->sse_handler(fd);
-            return -1; /* fd owned by sse handler */
+            if (sse_start(conn) < 0) return -1;
+            r->sse_handler(conn);
+            return -1; /* conn owned by sse handler */
         }
 
-        /* For non-streaming routes: buffer the full body before calling the
-         * handler.  Streaming routes receive only the partial body that arrived
-         * with the headers; they read the rest themselves from req->fd. */
         if (!r->is_streaming) {
             const char *cl = chttp_header(req, "Content-Length");
             if (cl) {
@@ -518,22 +616,22 @@ int chttp_dispatch(HttpServer *srv, HttpRequest *req, HttpResponse *res, int fd)
                 if (srv->max_body_size > 0 && clen > srv->max_body_size) {
                     const char *r413 =
                         "HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\n\r\n";
-                    write(fd, r413, strlen(r413));
-                    return -2; /* response already written */
+                    chttp_conn_write(conn, r413, strlen(r413));
+                    return -2;
                 }
                 if (clen > req->body_len) {
                     char *heap = malloc(clen + 1);
                     if (!heap) {
                         const char *r500 =
                             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n";
-                        write(fd, r500, strlen(r500));
+                        chttp_conn_write(conn, r500, strlen(r500));
                         return -2;
                     }
                     if (req->body && req->body_len > 0)
                         memcpy(heap, req->body, req->body_len);
                     size_t got = req->body_len;
                     while (got < clen) {
-                        int r = recv(fd, heap + got, clen - got, 0);
+                        ssize_t r = conn_recv_plain(conn, heap + got, clen - got);
                         if (r <= 0) { free(heap); return -2; }
                         got += (size_t)r;
                     }
@@ -643,7 +741,7 @@ void chttp_send_cjson(HttpResponse *res, cJSON *obj) {
     free(str);
 }
 
-int chttp_write_response(int fd, HttpResponse *res) {
+int chttp_write_response(CConn *conn, HttpResponse *res) {
     char hbuf[4096];
     int n = snprintf(hbuf, sizeof(hbuf),
                      "HTTP/1.1 %d %s\r\n", res->status, status_text(res->status));
@@ -662,29 +760,83 @@ int chttp_write_response(int fd, HttpResponse *res) {
     n += snprintf(hbuf + n, sizeof(hbuf) - n,
                   "Content-Length: %zu\r\n\r\n", res->body_len);
 
-    write(fd, hbuf, n);
+    chttp_conn_write(conn, hbuf, n);
     if (res->body_len > 0)
-        write(fd, res->body, res->body_len);
+        chttp_conn_write(conn, res->body, res->body_len);
 
     return 0;
+}
+
+/* ---- TLS server setup ---- */
+
+int chttp_server_enable_tls(HttpServer *srv,
+                             const char *cert_path,
+                             const char *key_path) {
+#ifdef CHTTP_TLS
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) {
+        ERR_print_errors_fp(stderr);
+        return -1;
+    }
+    if (SSL_CTX_use_certificate_file(ctx, cert_path, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    if (!SSL_CTX_check_private_key(ctx)) {
+        fprintf(stderr, "chttp: TLS cert/key mismatch\n");
+        SSL_CTX_free(ctx);
+        return -1;
+    }
+    srv->ssl_ctx = ctx;
+    printf("TLS enabled (cert: %s)\n", cert_path);
+    return 0;
+#else
+    (void)srv; (void)cert_path; (void)key_path;
+    fprintf(stderr, "chttp: built without CHTTP_TLS — TLS not available\n");
+    return -1;
+#endif
 }
 
 /* ---- Server lifecycle ---- */
 
 typedef struct {
     HttpServer *srv;
-    int client_fd;
+    CConn      *conn;
 } ConnectionArgs;
 
 static void *connection_thread(void *arg) {
     ConnectionArgs *ca = (ConnectionArgs *)arg;
-    HttpServer *srv = ca->srv;
-    int fd = ca->client_fd;
+    HttpServer *srv  = ca->srv;
+    CConn      *conn = ca->conn;
     free(ca);
 
     char buf[CHTTP_READ_BUFSIZE];
-    int n = recv(fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) { close(fd); return NULL; }
+    ssize_t n;
+
+#ifdef CHTTP_TLS
+    if (conn->ssl) {
+        int ret = SSL_accept(conn->ssl);
+        if (ret <= 0) {
+            ERR_print_errors_fp(stderr);
+            chttp_conn_close(conn);
+            return NULL;
+        }
+        /* Initial read through SSL */
+        n = SSL_read(conn->ssl, buf, sizeof(buf) - 1);
+    } else {
+        n = recv(conn->fd, buf, sizeof(buf) - 1, 0);
+    }
+#else
+    n = recv(conn->fd, buf, sizeof(buf) - 1, 0);
+#endif
+
+    if (n <= 0) { chttp_conn_close(conn); return NULL; }
     buf[n] = '\0';
 
     HttpRequest  req;
@@ -694,14 +846,14 @@ static void *connection_thread(void *arg) {
 
     if (chttp_parse_request(&req, buf, n) < 0) {
         const char *bad = "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request";
-        write(fd, bad, strlen(bad));
-        close(fd);
+        chttp_conn_write(conn, bad, strlen(bad));
+        chttp_conn_close(conn);
         return NULL;
     }
 
-    req.fd = fd; /* expose client fd to handlers (used by fork-based auth) */
+    req.conn = conn;
 
-    /* Handle CORS preflight before routing — no handler needed */
+    /* Handle CORS preflight before routing */
     if (strcmp(req.method, "OPTIONS") == 0) {
         const char *pre =
             "HTTP/1.1 204 No Content\r\n"
@@ -711,16 +863,16 @@ static void *connection_thread(void *arg) {
             "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
             "Access-Control-Max-Age: 86400\r\n"
             "Content-Length: 0\r\n\r\n";
-        write(fd, pre, strlen(pre));
-        close(fd);
+        chttp_conn_write(conn, pre, strlen(pre));
+        chttp_conn_close(conn);
         return NULL;
     }
 
-    int dispatched = chttp_dispatch(srv, &req, &res, fd);
-    if (dispatched == -1) return NULL; /* WebSocket/SSE: handler owns fd */
-    if (dispatched == -2) {            /* 413/500 already written by dispatch */
+    int dispatched = chttp_dispatch(srv, &req, &res, conn);
+    if (dispatched == -1) return NULL; /* WS/SSE: handler owns conn */
+    if (dispatched == -2) {            /* 413/500 already written */
         free(req.body_heap);
-        close(fd);
+        chttp_conn_close(conn);
         return NULL;
     }
     if (!dispatched) {
@@ -728,24 +880,26 @@ static void *connection_thread(void *arg) {
         chttp_send_text(&res, "Not Found");
     }
 
-    /* status == 0 is a sentinel meaning a forked child already sent the
-     * response directly on fd; skip writing and just close our copy. */
+    /* status == 0: forked child already sent response — skip and release conn. */
     if (res.status != 0)
-        chttp_write_response(fd, &res);
+        chttp_write_response(conn, &res);
     free(req.body_heap);
     chttp_response_free(&res);
-    close(fd);
+
+    if (res.status == 0)
+        chttp_conn_free(conn);  /* parent post-fork: no TLS shutdown */
+    else
+        chttp_conn_close(conn); /* normal close with TLS shutdown */
+
     return NULL;
 }
 
 int chttp_server_init(HttpServer *srv, int port) {
-    /* Ignore SIGPIPE so write/sendfile return -1/EPIPE instead of killing
-     * the process when a client closes the connection mid-transfer. */
     signal(SIGPIPE, SIG_IGN);
 
     memset(srv, 0, sizeof(*srv));
     srv->port          = port;
-    srv->max_body_size = 64 * 1024 * 1024; /* 64 MB default; set to 0 for unlimited */
+    srv->max_body_size = 64 * 1024 * 1024;
 
     srv->server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (srv->server_fd < 0) { perror("socket"); return -1; }
@@ -768,15 +922,38 @@ int chttp_server_init(HttpServer *srv, int port) {
 }
 
 void chttp_server_run(HttpServer *srv) {
+#ifdef CHTTP_TLS
+    printf("Listening on port %d (%s)\n", srv->port,
+           srv->ssl_ctx ? "HTTPS" : "HTTP");
+#else
     printf("Listening on port %d\n", srv->port);
+#endif
+
     while (1) {
         int client_fd = accept(srv->server_fd, NULL, NULL);
         if (client_fd < 0) { perror("accept"); continue; }
 
+        CConn *conn = conn_alloc(client_fd);
+        if (!conn) { close(client_fd); continue; }
+
+#ifdef CHTTP_TLS
+        if (srv->ssl_ctx) {
+            SSL *ssl = SSL_new((SSL_CTX *)srv->ssl_ctx);
+            if (!ssl) {
+                ERR_print_errors_fp(stderr);
+                close(client_fd);
+                free(conn);
+                continue;
+            }
+            SSL_set_fd(ssl, client_fd);
+            conn->ssl = ssl;
+        }
+#endif
+
         ConnectionArgs *ca = malloc(sizeof(*ca));
-        if (!ca) { close(client_fd); continue; }
-        ca->srv = srv;
-        ca->client_fd = client_fd;
+        if (!ca) { chttp_conn_close(conn); continue; }
+        ca->srv  = srv;
+        ca->conn = conn;
 
         pthread_t tid;
         pthread_create(&tid, NULL, connection_thread, ca);
@@ -786,4 +963,10 @@ void chttp_server_run(HttpServer *srv) {
 
 void chttp_server_destroy(HttpServer *srv) {
     close(srv->server_fd);
+#ifdef CHTTP_TLS
+    if (srv->ssl_ctx) {
+        SSL_CTX_free((SSL_CTX *)srv->ssl_ctx);
+        srv->ssl_ctx = NULL;
+    }
+#endif
 }

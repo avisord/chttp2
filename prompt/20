@@ -1,0 +1,303 @@
+❯ how to setup https in this chttp server, do we need to implement it on our own or we can just plug it?
+❯ it should be opional but our server should have the capability to run on https on its own
+
+---
+Plan: Optional TLS/HTTPS for chttp2
+
+ Context
+
+ The chttp framework currently uses raw int fd for all client I/O. Adding optional TLS requires a CConn abstraction that wraps fd + SSL* so every I/O call can transparently
+ dispatch to either write()/recv() or SSL_write()/SSL_read(). The key constraint is that handler signatures (WsHandler, SseHandler) and streaming handlers in fs.c/static.c
+ all hold int fd directly — every one of those must migrate to CConn*.
+
+ Approach: CConn abstraction + OpenSSL, compile-time optional
+
+ #ifdef CHTTP_TLS guards all SSL code. Build plain with make, build with TLS with make TLS=1.
+
+ ---
+ New Public API (in lib/chttp.h)
+
+ /* Opaque connection handle (wraps fd + optional SSL*) */
+ typedef struct CConn CConn;
+
+ /* TLS enablement — call before chttp_server_run() */
+ int chttp_server_enable_tls(HttpServer *srv, const char *cert_path, const char *key_path);
+
+ /* CConn accessors (for callers that need the raw fd, e.g. dup2 in auth.c) */
+ int     chttp_conn_fd(CConn *conn);
+ ssize_t chttp_conn_write(CConn *conn, const void *buf, size_t n);
+ ssize_t chttp_conn_recv(CConn *conn, void *buf, size_t n, int flags);
+ int     chttp_conn_sendfile(CConn *conn, int file_fd, size_t count); /* TLS-aware */
+
+ /* Changed signatures */
+ int  chttp_write_response(CConn *conn, HttpResponse *res);
+ int  chttp_ws_send(CConn *conn, const char *payload, size_t len);
+ int  chttp_ws_recv(CConn *conn, char *buf, size_t bufsize);
+ int  chttp_sse_send(CConn *conn, const char *event, const char *data);
+
+ /* Changed handler typedefs */
+ typedef void (*WsHandler)(CConn *conn);
+ typedef void (*SseHandler)(CConn *conn);
+
+ /* HttpRequest: replace int fd with CConn *conn */
+ // req->fd  →  req->conn (CConn*)
+ // raw fd still accessible via chttp_conn_fd(req->conn)
+
+ ---
+ Changes per file
+
+ 1. lib/chttp.h
+
+ - Add typedef struct CConn CConn; (opaque)
+ - Change WsHandler / SseHandler typedefs to take CConn *conn
+ - Change HttpRequest.fd field from int fd to CConn *conn
+ - Change chttp_write_response, chttp_ws_send, chttp_ws_recv, chttp_sse_send signatures
+ - Add chttp_conn_fd, chttp_conn_write, chttp_conn_recv, chttp_conn_sendfile
+ - Add chttp_server_enable_tls
+ - Add SSL_CTX *ssl_ctx to HttpServer under #ifdef CHTTP_TLS
+
+ 2. lib/chttp.c
+
+ - Define struct CConn { int fd; #ifdef CHTTP_TLS SSL *ssl; #endif };
+ - Add static conn_write() / conn_recv() wrappers that dispatch to SSL or plain
+ - chttp_conn_sendfile(): uses sendfile() when no TLS, falls back to read()+conn_write() loop when TLS (sendfile bypasses the TLS layer)
+ - chttp_server_enable_tls(): SSL_CTX_new(), load cert/key, store in srv->ssl_ctx
+ - chttp_server_init(): initialize ssl_ctx = NULL
+ - chttp_server_destroy(): SSL_CTX_free(srv->ssl_ctx) if set
+ - In connection_thread(): after accept(), if ssl_ctx != NULL: allocate CConn on heap, SSL_new(), SSL_set_fd(), SSL_accept() (with error → close and return). If no TLS:
+ allocate plain CConn with ssl = NULL.
+ - All internal recv(fd, ...) → conn_recv(conn, ...), write(fd, ...) → conn_write(conn, ...)
+ - ws_handshake(fd, req) → ws_handshake(CConn *conn, req), sse_start(fd) → sse_start(CConn *conn)
+ - ConnectionArgs: replace int client_fd with CConn *conn
+ - On connection close: if TLS, call SSL_shutdown() + SSL_free() then close(fd), else just close(fd)
+
+ 3. src/auth/auth.c
+
+ - fork_and_run / fork_and_stream: replace int client_fd = req->fd with CConn *conn = req->conn; int client_fd = chttp_conn_fd(conn)
+ - In child after fork: use chttp_write_response(conn, &child_res) (already uses CConn)
+ - Child cleanup: SSL_shutdown(conn->ssl); SSL_free(conn->ssl); close(client_fd); free(conn) then _exit(0) — wrapped in chttp_conn_close() helper
+ - Parent after fork: call chttp_conn_free(conn) which does SSL_free() (no shutdown) + close(fd) + free(conn) — avoids sending close_notify from parent since child owns the
+ connection
+
+ Add two helpers (internal or exported):
+ - chttp_conn_close(CConn*) — full TLS shutdown + free + close (for normal and child close)
+ - chttp_conn_free(CConn*) — SSL_free without shutdown + close + free (for parent post-fork)
+
+ 4. src/fs/fs.c
+
+ - handle_fs_download_impl: write(req->fd, hbuf, n) → chttp_conn_write(req->conn, hbuf, n), sendfile(req->fd, ...) → chttp_conn_sendfile(req->conn, file_fd, remaining)
+ - handle_fs_stream_upload_impl: recv(req->fd, chunk, want, 0) → chttp_conn_recv(req->conn, chunk, want, 0)
+ - handle_fs_upload_chunk_impl: two recv(req->fd, ...) → chttp_conn_recv(req->conn, ...)
+
+ 5. src/routes/routes.c
+
+ - handle_socket: signature void handle_socket(int fd) → void handle_socket(CConn *conn), update all chttp_ws_send(fd, ...), chttp_ws_recv(fd, ...), close(fd) →
+ chttp_conn_close(conn)
+ - handle_sse: signature void handle_sse(int fd) → void handle_sse(CConn *conn), update recv(fd, ...) → chttp_conn_recv(conn, ...), chttp_sse_send(fd, ...), close(fd) →
+ chttp_conn_close(conn)
+
+ 6. src/routes/static.c
+
+ - send_error(int fd, ...) → send_error(CConn *conn, ...), write(fd, ...) → chttp_conn_write(conn, ...)
+ - send_304(int fd, ...) → send_304(CConn *conn, ...)
+ - All write(req->fd, ...) → chttp_conn_write(req->conn, ...)
+ - sendfile(req->fd, ...) → chttp_conn_sendfile(req->conn, file_fd, remaining)
+ - All req->fd → req->conn
+
+ 7. Makefile
+
+ ifdef TLS
+ CFLAGS  += -DCHTTP_TLS
+ LDFLAGS += -lssl -lcrypto
+ endif
+ Build: make TLS=1 for HTTPS, make for HTTP.
+
+ 8. src/main.c
+
+ After chttp_server_init(), add (conditional on argv or env):
+ if (use_tls)
+     chttp_server_enable_tls(&srv, "cert.pem", "key.pem");
+
+ ---
+ Fork + TLS safety
+
+ After fork(), parent and child have separate virtual address spaces (COW). The SSL* is independent in each — SSL_free() in the parent does not affect the child's copy.
+
+ - Child: owns the connection, does chttp_conn_close(conn) (full SSL_shutdown)
+ - Parent: does chttp_conn_free(conn) — SSL_free() (no shutdown) + close(fd) + free(conn)
+
+ The parent must not send TLS close_notify because the child still has the connection open.
+
+ ---
+ sendfile + TLS
+
+ sendfile() is a kernel syscall that bypasses userspace — it cannot pass data through SSL_write(). chttp_conn_sendfile() implementation:
+ int chttp_conn_sendfile(CConn *conn, int file_fd, size_t count) {
+ #ifdef CHTTP_TLS
+     if (conn->ssl) {
+         /* fallback: read into buffer, SSL_write in chunks */
+         char buf[65536];
+         while (count > 0) {
+             ssize_t r = read(file_fd, buf, MIN(sizeof(buf), count));
+             if (r <= 0) return -1;
+             if (SSL_write(conn->ssl, buf, r) <= 0) return -1;
+             count -= r;
+         }
+         return 0;
+     }
+ #endif
+     /* plain: use sendfile */
+     off_t offset = 0;
+     while (count > 0) {
+         ssize_t s = sendfile(conn->fd, file_fd, &offset, count);
+         if (s <= 0) return -1;
+         count -= s;
+     }
+     return 0;
+ }
+
+ ---
+ Verification
+
+ 1. Build plain HTTP: make clean && make — zero warnings, server starts on HTTP
+ 2. Build with TLS: make clean && make TLS=1 — links with -lssl -lcrypto
+ 3. Generate test cert: openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
+ 4. Run: sudo ./dist/server --tls cert.pem key.pem
+ 5. Test: curl -k https://localhost:8080/whoami (plain HTTP routes)
+ 6. Test WS: wscat --no-check -c wss://localhost:8080/socket
+ 7. Test SSE: curl -k https://localhost:8080/sse
+ 8. Test file download/upload through HTTPS
+
+---
+  What was implemented
+
+  New abstraction: CConn (in lib/chttp.h / lib/chttp.c)
+  - Wraps int fd + SSL* (SSL only present when built with -DCHTTP_TLS)
+  - All I/O goes through chttp_conn_write(), chttp_conn_recv(), chttp_conn_sendfile()
+  - chttp_conn_close() — full TLS shutdown (used by connection owner / child after fork)
+  - chttp_conn_free() — SSL_free without shutdown (used by forked parent so only child terminates TLS)
+
+  Handler signatures changed:
+  - WsHandler(int fd) → WsHandler(CConn *conn)
+  - SseHandler(int fd) → SseHandler(CConn *conn)
+  - req->fd → req->conn
+
+  sendfile over TLS: automatically falls back to a read() + SSL_write() loop in chttp_conn_sendfile()
+
+  Files changed: lib/chttp.h, lib/chttp.c, src/auth/auth.c, src/fs/fs.c, src/routes/routes.c,
+  src/routes/routes.h, src/routes/static.c, src/main.c, Makefile
+
+  ---
+  Usage
+
+  # HTTP (no change)
+  make && sudo ./dist/server
+
+  # HTTPS — build with TLS support
+  make TLS=1
+
+  # Run with cert/key
+  sudo ./dist/server --tls /path/to/cert.pem /path/to/key.pem
+  # or via env
+  sudo CHTTP_TLS_CERT=cert.pem CHTTP_TLS_KEY=key.pem ./dist/server
+
+  # Generate a self-signed cert for testing
+  openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem \
+    -days 365 -nodes -subj '/CN=localhost'
+
+---
+
+
+  openssl req -x509 -newkey rsa:2048 \
+    -keyout key.pem -out cert.pem \
+    -days 365 -nodes \
+    -subj '/CN=localhost'
+
+  -nodes = no passphrase (required since the server reads the key at startup without a prompt).
+
+  ---
+  Production (Let's Encrypt)
+
+  Requires a public domain name pointing to your server.
+
+  Certbot (most common):
+  # Install
+  apt install certbot
+
+  # Standalone mode (temporarily binds port 80)
+  sudo certbot certonly --standalone -d yourdomain.com
+
+  # Certs are at:
+  # /etc/letsencrypt/live/yourdomain.com/fullchain.pem
+  # /etc/letsencrypt/live/yourdomain.com/privkey.pem
+
+  Run the server:
+  sudo ./dist/server --tls \
+    /etc/letsencrypt/live/yourdomain.com/fullchain.pem \
+    /etc/letsencrypt/live/yourdomain.com/privkey.pem
+
+  Let's Encrypt certs expire every 90 days. Auto-renew:
+  sudo certbot renew --pre-hook "pkill server" --post-hook "sudo ./dist/server ..."
+  # or just renew the cert and send SIGHUP/restart the server
+
+  ---
+  Key point
+
+  Always use fullchain.pem (not just cert.pem) for Let's Encrypt — it includes the intermediate CA that browsers need to verify the
+  chain.
+
+
+---
+● For LAN without a domain, you have two practical options:
+
+  Option 1: Self-signed with IP SAN (simplest)
+
+  Browsers reject self-signed certs for bare IPs unless you add a Subject Alternative Name:
+
+  openssl req -x509 -newkey rsa:2048 \
+    -keyout key.pem -out cert.pem \
+    -days 3650 -nodes \
+    -subj '/CN=192.168.1.100' \
+    -addext 'subjectAltName=IP:192.168.1.100'
+
+  Replace 192.168.1.100 with your server's LAN IP.
+
+  Result: browser shows a "Not Secure" warning once — user clicks "Advanced → Proceed". After that it works. Fine for personal/internal
+  tools.
+
+  ---
+  Option 2: Local CA with mkcert (best for LAN teams)
+
+  https://github.com/FiloSottile/mkcert creates a local certificate authority and installs it into the system/browser trust stores so no
+  warnings appear.
+
+  # Install (Arch/Debian/etc)
+  sudo pacman -S mkcert    # or: apt install mkcert
+
+  # On the server machine: create local CA
+  mkcert -install
+
+  # Generate cert for LAN IP (or hostname)
+  mkcert 192.168.1.100 localhost 127.0.0.1
+  # produces: 192.168.1.100+2.pem  192.168.1.100+2-key.pem
+
+  Run the server:
+  sudo ./dist/server --tls 192.168.1.100+2.pem 192.168.1.100+2-key.pem
+
+  For other users on the LAN: they need to install your CA once:
+  # Copy mkcert's rootCA.pem to their machine, then:
+  mkcert -CAROOT   # shows where it lives on the server
+  # On client: import rootCA.pem into browser/system trust store
+
+  ---
+  Recommendation
+
+  ┌─────────────────────────────┬──────────────────────┐
+  │          Scenario           │         Use          │
+  ├─────────────────────────────┼──────────────────────┤
+  │ Just you, quick setup       │ Self-signed + IP SAN │
+  ├─────────────────────────────┼──────────────────────┤
+  │ Small LAN team, no warnings │ mkcert local CA      │
+  └─────────────────────────────┴──────────────────────┘
+
+

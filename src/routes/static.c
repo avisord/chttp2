@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -27,7 +26,7 @@ static const char CORS[] =
     "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
     "Connection: close\r\n";  /* server is HTTP/1.0-style; tell browser not to reuse */
 
-static void send_error(int fd, int code, const char *text) {
+static void send_error(CConn *conn, int code, const char *text) {
     char buf[512];
     int n = snprintf(buf, sizeof(buf),
         "HTTP/1.1 %d %s\r\n"
@@ -35,10 +34,10 @@ static void send_error(int fd, int code, const char *text) {
         "%s"
         "\r\n",
         code, text, CORS);
-    write(fd, buf, n);
+    chttp_conn_write(conn, buf, n);
 }
 
-static void send_304(int fd, const char *etag) {
+static void send_304(CConn *conn, const char *etag) {
     char buf[512];
     int n = snprintf(buf, sizeof(buf),
         "HTTP/1.1 304 Not Modified\r\n"
@@ -46,7 +45,7 @@ static void send_304(int fd, const char *etag) {
         "%s"
         "\r\n",
         etag, CORS);
-    write(fd, buf, n);
+    chttp_conn_write(conn, buf, n);
 }
 
 void handle_static(HttpRequest *req, HttpResponse *res) {
@@ -71,7 +70,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* Reject path traversal */
     if (strstr(rel_decoded, "..")) {
         printf("[static] 400 path traversal attempt: '%s'\n", rel_decoded);
-        send_error(req->fd, 400, "Bad Request");
+        send_error(req->conn, 400, "Bad Request");
         res->status = 0;
         return;
     }
@@ -83,7 +82,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     struct stat st;
     if (stat(full_path, &st) < 0) {
         printf("[static] 404 stat('%s'): %s\n", full_path, strerror(errno));
-        send_error(req->fd, 404, "Not Found");
+        send_error(req->conn, 404, "Not Found");
         res->status = 0;
         return;
     }
@@ -99,7 +98,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
             "%s"
             "\r\n",
             req->path, CORS);
-        write(req->fd, rbuf, n);
+        chttp_conn_write(req->conn, rbuf, n);
         res->status = 0;
         return;
     }
@@ -118,7 +117,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
                 memcpy(full_path, idx, sizeof(full_path));
             } else {
                 printf("[static] 403 no index in dir: %s\n", full_path);
-                send_error(req->fd, 403, "Forbidden");
+                send_error(req->conn, 403, "Forbidden");
                 res->status = 0;
                 return;
             }
@@ -128,7 +127,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     /* Must be a regular file */
     if (!S_ISREG(st.st_mode)) {
         printf("[static] 404 not a regular file: %s (mode=%o)\n", full_path, st.st_mode);
-        send_error(req->fd, 404, "Not Found");
+        send_error(req->conn, 404, "Not Found");
         res->status = 0;
         return;
     }
@@ -138,7 +137,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     if (!realpath(STATIC_ROOT, root_rp) || !realpath(full_path, file_rp)) {
         printf("[static] 404 realpath failed: root='%s' file='%s': %s\n",
                STATIC_ROOT, full_path, strerror(errno));
-        send_error(req->fd, 404, "Not Found");
+        send_error(req->conn, 404, "Not Found");
         res->status = 0;
         return;
     }
@@ -147,7 +146,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
         (file_rp[root_len] != '/' && file_rp[root_len] != '\0')) {
         printf("[static] 403 symlink escape: '%s' -> '%s' outside root '%s'\n",
                full_path, file_rp, root_rp);
-        send_error(req->fd, 403, "Forbidden");
+        send_error(req->conn, 403, "Forbidden");
         res->status = 0;
         return;
     }
@@ -161,7 +160,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     const char *inm = chttp_header(req, "If-None-Match");
     if (inm && strcmp(inm, etag) == 0) {
         printf("[static] 304 ETag match: %s %s\n", etag, full_path);
-        send_304(req->fd, etag);
+        send_304(req->conn, etag);
         res->status = 0;
         return;
     }
@@ -174,7 +173,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
             time_t ims_time = timegm(&tm_ims);
             if (st.st_mtime <= ims_time) {
                 printf("[static] 304 not modified: %s\n", full_path);
-                send_304(req->fd, etag);
+                send_304(req->conn, etag);
                 res->status = 0;
                 return;
             }
@@ -223,7 +222,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
                     "%s"
                     "\r\n",
                     (long long)st.st_size, CORS);
-                write(req->fd, buf, n);
+                chttp_conn_write(req->conn, buf, n);
                 res->status = 0;
                 return;
             }
@@ -239,7 +238,7 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
     int file_fd = open(full_path, O_RDONLY);
     if (file_fd < 0) {
         printf("[static] 500 open('%s'): %s\n", full_path, strerror(errno));
-        send_error(req->fd, 500, "Internal Server Error");
+        send_error(req->conn, 500, "Internal Server Error");
         res->status = 0;
         return;
     }
@@ -259,10 +258,10 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
         printf("[static] %d %s bytes=%lld-%lld/%lld mime=%s fd=%d\n",
                status_code, full_path,
                (long long)range_start, (long long)range_end, (long long)st.st_size,
-               mime, req->fd);
+               mime, chttp_conn_fd(req->conn));
     else
         printf("[static] %d %s size=%lld mime=%s fd=%d\n",
-               status_code, full_path, (long long)st.st_size, mime, req->fd);
+               status_code, full_path, (long long)st.st_size, mime, chttp_conn_fd(req->conn));
 
     /* Write response headers */
     char hbuf[1024];
@@ -302,26 +301,19 @@ void handle_static(HttpRequest *req, HttpResponse *res) {
             last_modified,
             CORS);
     }
-    write(req->fd, hbuf, n);
+    chttp_conn_write(req->conn, hbuf, n);
 
     /* Send body for GET only (HEAD omits body) */
     if (strcmp(req->method, "GET") == 0) {
-        off_t offset    = range_start;
-        off_t remaining = content_length;
-        while (remaining > 0) {
-            ssize_t sent = sendfile(req->fd, file_fd, &offset, (size_t)remaining);
-            if (sent <= 0) {
-                printf("[static] sendfile interrupted: sent=%zd remaining=%lld errno=%d(%s) file=%s fd=%d\n",
-                       sent, (long long)remaining, errno, strerror(errno), full_path, req->fd);
-                break;
-            }
-            remaining -= sent;
-        }
-        if (remaining == 0)
+        if (lseek(file_fd, range_start, SEEK_SET) < 0 ||
+            chttp_conn_sendfile(req->conn, file_fd, (size_t)content_length) < 0)
+            printf("[static] transfer interrupted: file=%s fd=%d\n",
+                   full_path, chttp_conn_fd(req->conn));
+        else
             printf("[static] done: %s -> fd=%d (%lld bytes)\n",
-                   full_path, req->fd, (long long)content_length);
+                   full_path, chttp_conn_fd(req->conn), (long long)content_length);
     } else {
-        printf("[static] HEAD done: %s fd=%d\n", full_path, req->fd);
+        printf("[static] HEAD done: %s fd=%d\n", full_path, chttp_conn_fd(req->conn));
     }
 
     close(file_fd);

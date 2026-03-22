@@ -70,7 +70,7 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     return -1;
   }
 
-  int client_fd = req->fd;
+  CConn *conn = req->conn;
 
   pid_t pid = fork();
   if (pid < 0) {
@@ -98,8 +98,8 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     memset(&_er, 0, sizeof(_er));                                              \
     _er.status = (http_code);                                                  \
     chttp_send_json(&_er, (json_msg));                                         \
-    chttp_write_response(client_fd, &_er);                                     \
-    close(client_fd);                                                          \
+    chttp_write_response(conn, &_er);                                          \
+    chttp_conn_close(conn);                                                    \
     close(pipefd[1]);                                                          \
     _exit(1);                                                                  \
   } while (0)
@@ -131,8 +131,8 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     handler(req, &child_res);
 
     /* Write response to client then tear down. */
-    chttp_write_response(client_fd, &child_res);
-    close(client_fd);
+    chttp_write_response(conn, &child_res);
+    chttp_conn_close(conn);
     close(pipefd[1]); /* EOF on pipe — signals parent we are done */
     _exit(0);
 
@@ -173,7 +173,7 @@ int fork_and_run(HttpRequest *req, HttpResponse *res,
     memset(&err_res, 0, sizeof(err_res));
     err_res.status = 504;
     chttp_send_json(&err_res, "{\"error\":\"Request handler timed out\"}");
-    chttp_write_response(client_fd, &err_res);
+    chttp_write_response(conn, &err_res);
     chttp_response_free(&err_res);
   }
 
@@ -204,7 +204,7 @@ int fork_and_stream(HttpRequest *req, HttpResponse *res,
     return -1;
   }
 
-  int client_fd = req->fd;
+  CConn *conn2 = req->conn;
 
   pid_t pid = fork();
   if (pid < 0) {
@@ -225,9 +225,9 @@ int fork_and_stream(HttpRequest *req, HttpResponse *res,
     memset(&_er, 0, sizeof(_er));                                              \
     _er.status = (http_code);                                                  \
     chttp_send_json(&_er, (json_msg));                                         \
-    chttp_write_response(client_fd, &_er);                                     \
+    chttp_write_response(conn2, &_er);                                         \
     chttp_response_free(&_er);                                                 \
-    close(client_fd);                                                          \
+    chttp_conn_close(conn2);                                                   \
     close(pipefd[1]);                                                          \
     _exit(1);                                                                  \
   } while (0)
@@ -247,9 +247,9 @@ int fork_and_stream(HttpRequest *req, HttpResponse *res,
     child_res.status = 200;
     handler(req, &child_res);
 
-    chttp_write_response(client_fd, &child_res);
+    chttp_write_response(conn2, &child_res);
     chttp_response_free(&child_res);
-    close(client_fd);
+    chttp_conn_close(conn2);
     close(pipefd[1]);
     _exit(0);
 
@@ -282,7 +282,7 @@ int fork_and_stream(HttpRequest *req, HttpResponse *res,
     memset(&err_res, 0, sizeof(err_res));
     err_res.status = 504;
     chttp_send_json(&err_res, "{\"error\":\"Upload timed out\"}");
-    chttp_write_response(client_fd, &err_res);
+    chttp_write_response(conn2, &err_res);
     chttp_response_free(&err_res);
   }
 

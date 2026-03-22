@@ -141,7 +141,8 @@ void handle_login(HttpRequest *req, HttpResponse *res) {
 }
 
 /* GET /socket — WebSocket endpoint */
-void handle_socket(int fd) {
+void handle_socket(CConn *conn) {
+  int fd = chttp_conn_fd(conn); /* raw fd for select() */
   char buf[4096];
   time_t last_tick = time(NULL);
 
@@ -170,7 +171,7 @@ void handle_socket(int fd) {
       cJSON_AddStringToObject(ev, "timestamp", ts);
       char *msg = cJSON_PrintUnformatted(ev);
       cJSON_Delete(ev);
-      if (chttp_ws_send(fd, msg, strlen(msg)) < 0) {
+      if (chttp_ws_send(conn, msg, strlen(msg)) < 0) {
         free(msg);
         break;
       }
@@ -181,7 +182,7 @@ void handle_socket(int fd) {
     if (sel == 0)
       continue;
 
-    int n = chttp_ws_recv(fd, buf, sizeof(buf) - 1);
+    int n = chttp_ws_recv(conn, buf, sizeof(buf) - 1);
     if (n < 0)
       break;
     if (n == 0)
@@ -197,18 +198,19 @@ void handle_socket(int fd) {
     cJSON_AddStringToObject(ev, "timestamp", ts);
     char *msg = cJSON_PrintUnformatted(ev);
     cJSON_Delete(ev);
-    if (chttp_ws_send(fd, msg, strlen(msg)) < 0) {
+    if (chttp_ws_send(conn, msg, strlen(msg)) < 0) {
       free(msg);
       break;
     }
     free(msg);
   }
 
-  close(fd);
+  chttp_conn_close(conn);
 }
 
 /* GET /sse — Server-Sent Events endpoint */
-void handle_sse(int fd) {
+void handle_sse(CConn *conn) {
+  int fd = chttp_conn_fd(conn); /* raw fd for select() */
   while (1) {
     fd_set rfds;
     FD_ZERO(&rfds);
@@ -221,7 +223,7 @@ void handle_sse(int fd) {
 
     if (sel > 0) {
       char tmp[16];
-      if (recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT) <= 0)
+      if (chttp_conn_recv(conn, tmp, sizeof(tmp), MSG_DONTWAIT) <= 0)
         break;
     }
 
@@ -231,17 +233,17 @@ void handle_sse(int fd) {
 
     char ping_data[64];
     snprintf(ping_data, sizeof(ping_data), "{\"timestamp\":\"%s\"}", ts);
-    if (chttp_sse_send(fd, "ping", ping_data) < 0)
+    if (chttp_sse_send(conn, "ping", ping_data) < 0)
       break;
 
     char msg_data[128];
     snprintf(msg_data, sizeof(msg_data),
              "{\"text\":\"hello from server\",\"timestamp\":\"%s\"}", ts);
-    if (chttp_sse_send(fd, "message", msg_data) < 0)
+    if (chttp_sse_send(conn, "message", msg_data) < 0)
       break;
   }
 
-  close(fd);
+  chttp_conn_close(conn);
 }
 
 /* GET /fdownload/:filename */

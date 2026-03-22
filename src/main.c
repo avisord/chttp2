@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -35,11 +37,24 @@ DEFINE_AUTH_ROUTE(handle_fs_upload_session_status, handle_fs_upload_session_stat
 DEFINE_STREAM_AUTH_ROUTE(handle_fs_upload_chunk,   handle_fs_upload_chunk_impl)
 DEFINE_AUTH_ROUTE(handle_fs_upload_session_abort,  handle_fs_upload_session_abort_impl)
 
-int main(void) {
+int main(int argc, char *argv[]) {
   if (getuid() != 0) {
     fprintf(stderr, "error: server must be run as root (use sudo)\n");
     return 1;
   }
+
+  /* Optional TLS: --tls <cert.pem> <key.pem>
+   * or environment variables CHTTP_TLS_CERT / CHTTP_TLS_KEY */
+  const char *tls_cert = NULL;
+  const char *tls_key  = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--tls") == 0 && i + 2 < argc) {
+      tls_cert = argv[++i];
+      tls_key  = argv[++i];
+    }
+  }
+  if (!tls_cert) tls_cert = getenv("CHTTP_TLS_CERT");
+  if (!tls_key)  tls_key  = getenv("CHTTP_TLS_KEY");
 
   mkdir(SESSION_DIR, 0700);
 
@@ -47,6 +62,14 @@ int main(void) {
 
   if (chttp_server_init(&srv, 8080) < 0)
     return 1;
+
+  /* Enable TLS if cert/key were provided */
+  if (tls_cert && tls_key) {
+    if (chttp_server_enable_tls(&srv, tls_cert, tls_key) < 0) {
+      fprintf(stderr, "error: TLS initialization failed\n");
+      return 1;
+    }
+  }
 
   /* Expose the listening fd so forked children can close it. */
   g_server_fd = srv.server_fd;
