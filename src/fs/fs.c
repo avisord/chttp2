@@ -129,7 +129,11 @@ void handle_fs_download_impl(HttpRequest *req, HttpResponse *res) {
   /* Write HTTP response headers directly to the client socket */
   char hbuf[4096];
   char cd[320];
-  snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", fname);
+  const char *inline_param = chttp_query_param(req, "inline");
+  if (inline_param && strcmp(inline_param, "1") == 0)
+    snprintf(cd, sizeof(cd), "inline; filename=\"%s\"", fname);
+  else
+    snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", fname);
   int n = snprintf(hbuf, sizeof(hbuf),
       "HTTP/1.1 200 OK\r\n"
       "Content-Type: %s\r\n"

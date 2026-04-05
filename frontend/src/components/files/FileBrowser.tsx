@@ -19,6 +19,7 @@ import {
 } from '@/store/slices/fileSystemSlice'
 import { addUpload, updateProgress, setUploadStatus } from '@/store/slices/uploadsSlice'
 import { simpleUpload, downloadFile } from '@/api/filesystem'
+import { getFileViewType, getDownloadUrl } from '@/lib/fileTypes'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { FileEntry } from '@/types/api'
 
@@ -31,6 +32,7 @@ import FileContextMenu from './FileContextMenu'
 import NewFolderDialog from './NewFolderDialog'
 import RenameDialog from './RenameDialog'
 import DeleteConfirmDialog from './DeleteConfirmDialog'
+import DownloadDialog from './DownloadDialog'
 
 export default function FileBrowser() {
   const dispatch = useAppDispatch()
@@ -56,6 +58,8 @@ export default function FileBrowser() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOriginPath, setSearchOriginPath] = useState<string | null>(null)
   const [contextEntry, setContextEntry] = useState<FileEntry | null>(null)
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false)
+  const [downloadDialogEntry, setDownloadDialogEntry] = useState<FileEntry | null>(null)
   const [activePath, setActivePath] = useState<string | null>(null)
   const [gridColumnCount, setGridColumnCount] = useState(1)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -176,13 +180,42 @@ export default function FileBrowser() {
     [dispatch, filteredEntries],
   )
 
+  const openFile = useCallback(
+    (entry: FileEntry) => {
+      const fullPath = resolvePath(entry.name)
+      const viewType = getFileViewType(entry.name, entry.mime)
+
+      switch (viewType) {
+        case 'image':
+          break;
+        case 'video':
+          break;
+        case 'audio':
+          break;
+        case 'pdf':
+          window.open(getDownloadUrl(fullPath, true), '_blank')
+          break
+        case 'text':
+          window.open(`/view?path=${encodeURIComponent(fullPath)}`, '_blank')
+          break
+        case 'unsupported':
+          setDownloadDialogEntry(entry)
+          setDownloadDialogOpen(true)
+          break
+      }
+    },
+    [resolvePath],
+  )
+
   const handleItemDoubleClick = useCallback(
     (entry: FileEntry) => {
       if (entry.type === 'dir') {
         navigateTo(resolvePath(entry.name))
+      } else {
+        openFile(entry)
       }
     },
-    [navigateTo, resolvePath],
+    [navigateTo, openFile, resolvePath],
   )
 
   const handleUploadFiles = useCallback(
@@ -704,6 +737,16 @@ export default function FileBrowser() {
         onConfirm={() => {
           handleDelete(deleteTargets)
           setDeleteOpen(false)
+        }}
+      />
+      <DownloadDialog
+        open={downloadDialogOpen}
+        onOpenChange={setDownloadDialogOpen}
+        filename={downloadDialogEntry?.name ?? ''}
+        onDownload={() => {
+          if (downloadDialogEntry) {
+            downloadFile(resolvePath(downloadDialogEntry.name), downloadDialogEntry.name)
+          }
         }}
       />
     </div>

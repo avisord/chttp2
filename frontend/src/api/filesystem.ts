@@ -91,15 +91,12 @@ export function simpleUpload(dirPath: string, file: File, onProgress?: (pct: num
   })
 }
 
-export async function downloadFile(path: string, filename: string) {
-  const res = await apiRequestRaw(`/fs/download?path=${encodeURIComponent(path)}`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
+export function downloadFile(path: string, _filename?: string) {
   const a = document.createElement('a')
-  a.href = url
-  a.download = filename
+  a.href = `/fs/download?path=${encodeURIComponent(path)}`
+  debugger;
+  a.download = ''
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
 }
