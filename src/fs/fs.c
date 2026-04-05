@@ -120,44 +120,42 @@ void handle_fs_download_impl(HttpRequest *req, HttpResponse *res) {
     return;
   }
 
+  printf("Sending file %s\n", path);
   int file_fd = open(path, O_RDONLY);
   if (file_fd < 0) { fs_error(res, errno); return; }
 
   const char *slash = strrchr(path, '/');
   const char *fname = slash ? slash + 1 : path;
+  printf("fname=%s\n", fname);
 
-  /* Write HTTP response headers directly to the client socket */
-  char hbuf[4096];
+  /* Read file into response body */
+  if (chttp_body_alloc(res, (size_t)st.st_size) < 0) {
+    close(file_fd);
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Out of memory\",\"errno\":0}");
+    return;
+  }
+
+  size_t total = 0;
+  while (total < (size_t)st.st_size) {
+    ssize_t rd = read(file_fd, res->body + total, (size_t)st.st_size - total);
+    if (rd <= 0) break;
+    total += (size_t)rd;
+  }
+  close(file_fd);
+  res->body_len = total;
+
+  /* Set headers via framework */
   char cd[320];
   const char *inline_param = chttp_query_param(req, "inline");
   if (inline_param && strcmp(inline_param, "1") == 0)
     snprintf(cd, sizeof(cd), "inline; filename=\"%s\"", fname);
   else
     snprintf(cd, sizeof(cd), "attachment; filename=\"%s\"", fname);
-  int n = snprintf(hbuf, sizeof(hbuf),
-      "HTTP/1.1 200 OK\r\n"
-      "Content-Type: %s\r\n"
-      "Content-Disposition: %s\r\n"
-      "Content-Length: %lld\r\n"
-      "Access-Control-Allow-Origin: http://localhost:8081\r\n"
-      "Access-Control-Allow-Credentials: true\r\n"
-      "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
-      "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
-      "\r\n",
-      mime_from_ext(fname), cd, (long long)st.st_size);
-  write(req->fd, hbuf, n);
 
-  /* Zero-copy kernel transfer: file → socket */
-  off_t offset = 0;
-  off_t remaining = st.st_size;
-  while (remaining > 0) {
-    ssize_t sent = sendfile(req->fd, file_fd, &offset, (size_t)remaining);
-    if (sent <= 0) break;   /* client disconnected — nothing to do */
-    remaining -= sent;
-  }
-
-  close(file_fd);
-  res->status = 0;  /* headers already sent — skip chttp_write_response */
+  chttp_set_status(res, 200);
+  chttp_set_header(res, "Content-Type", mime_from_ext(fname));
+  chttp_set_header(res, "Content-Disposition", cd);
 }
 
 /* DELETE /fs/file?path=docs/file.txt */
