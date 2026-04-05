@@ -1,7 +1,12 @@
-import { FolderOpen, Settings, HardDrive, Users } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { useEffect } from 'react'
+import { FolderOpen, Settings, HardDrive, Users, UserCircle } from 'lucide-react'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { useAppSelector } from '@/store/hooks'
+import { useAppDispatch, useAppSelector } from '@/store/hooks'
+import { fetchSessionsThunk, switchSessionThunk } from '@/store/slices/sessionsSlice'
+import { fetchBookmarksThunk } from '@/store/slices/bookmarksSlice'
+import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
 import PlacesPanel from '@/components/files/PlacesPanel'
 
 const adminItems = [
@@ -30,8 +35,29 @@ function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ComponentT
 }
 
 export default function Sidebar() {
+  const dispatch = useAppDispatch()
+  const navigate = useNavigate()
   const user = useAppSelector((s) => s.auth.user)
+  const { sessions } = useAppSelector((s) => s.sessions)
   const isRoot = user?.uid === 0 && user?.gid === 0
+
+  useEffect(() => {
+    dispatch(fetchSessionsThunk())
+  }, [dispatch])
+
+  const handleSwitch = async (sessionId: string) => {
+    try {
+      await dispatch(switchSessionThunk(sessionId)).unwrap()
+      dispatch(fetchBookmarksThunk())
+      dispatch(setCurrentPath('.'))
+      dispatch(listDirThunk('.'))
+      navigate('/')
+      toast.success('Switched session')
+    } catch {
+      toast.error('Failed to switch session')
+    }
+  }
+
   return (
     <aside className="flex w-56 flex-col border-r border-slate-200 bg-white">
       <nav className="flex flex-1 flex-col gap-1 overflow-auto p-3 pt-4">
@@ -42,6 +68,36 @@ export default function Sidebar() {
           Places
         </span>
         <PlacesPanel />
+
+        <div className="mx-0 my-1.5 border-t border-slate-100" />
+        <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          Sessions
+        </span>
+        <div className="flex flex-col gap-0.5">
+          {sessions.map((session) => {
+            const isActive = session.username === user?.username
+            return (
+              <button
+                key={session.session_id}
+                onClick={() => !isActive && handleSwitch(session.session_id)}
+                className={cn(
+                  'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer',
+                )}
+              >
+                <UserCircle className="h-4 w-4 shrink-0" />
+                <span className="truncate">{session.username}</span>
+                {isActive && (
+                  <span className="ml-auto text-[10px] font-semibold uppercase text-indigo-400">
+                    active
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
 
         <hr className="mx-0 my-1.5 border-slate-200" />
         <NavItem to="/settings" icon={Settings} label="Settings" />
