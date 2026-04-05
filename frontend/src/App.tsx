@@ -8,6 +8,8 @@ import LoginPage from '@/pages/LoginPage'
 import DashboardPage from '@/pages/DashboardPage'
 import SettingsPage from '@/pages/SettingsPage'
 import FileViewerPage from '@/pages/FileViewerPage'
+import UsersPage from '@/pages/UsersPage'
+import DisksPage from '@/pages/DisksPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch()
@@ -60,6 +62,8 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/view" element={<FileViewerPage />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/disks" element={<DisksPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

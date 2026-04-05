@@ -56,3 +56,23 @@ export interface ApiError {
   error: string
   errno?: number
 }
+
+export interface SystemUser {
+  username: string
+  uid: number
+  gid: number
+  home: string
+  shell: string
+  groups: string[]
+}
+
+export interface DiskInfo {
+  name: string
+  size: number
+  type: string
+  fstype: string | null
+  mountpoint: string | null
+  label: string | null
+  model: string | null
+  children?: DiskInfo[]
+}

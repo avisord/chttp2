@@ -67,7 +67,7 @@ feat: make entire file system completely keyboard navigatable
 
 ---
 
-feat: file viewer ui
+feat: file viewer ui (delayed)
 list of files formats to be supported:
   - image (all image formats which browser can handle)
   - video 
@@ -80,7 +80,12 @@ list of files formats to be supported:
 ---
 
 
-
+feat: user and disk management
+need active root session to manage user and disk
+- if there is no active session then do not show user and disk management options in sidebar
+- to check whether user is root or not: check thier uid and gid it must be 0 and 0
+- add user management (add, read, delete, edit) options
+- add disk management (add, read, delete, edit) options
 
 
 

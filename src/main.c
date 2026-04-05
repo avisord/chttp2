@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "admin/admin.h"
 #include "auth/auth.h"
 #include "fs/fs.h"
 #include "routes/routes.h"
@@ -34,6 +35,15 @@ DEFINE_AUTH_ROUTE(handle_fs_upload_session_create, handle_fs_upload_session_crea
 DEFINE_AUTH_ROUTE(handle_fs_upload_session_status, handle_fs_upload_session_status_impl)
 DEFINE_STREAM_AUTH_ROUTE(handle_fs_upload_chunk,   handle_fs_upload_chunk_impl)
 DEFINE_AUTH_ROUTE(handle_fs_upload_session_abort,  handle_fs_upload_session_abort_impl)
+
+/* Admin management — runs as authenticated user; handlers guard on uid==0 */
+DEFINE_AUTH_ROUTE(handle_admin_list_users,  handle_admin_list_users_impl)
+DEFINE_AUTH_ROUTE(handle_admin_create_user, handle_admin_create_user_impl)
+DEFINE_AUTH_ROUTE(handle_admin_edit_user,   handle_admin_edit_user_impl)
+DEFINE_AUTH_ROUTE(handle_admin_delete_user, handle_admin_delete_user_impl)
+DEFINE_AUTH_ROUTE(handle_admin_list_disks,  handle_admin_list_disks_impl)
+DEFINE_AUTH_ROUTE(handle_admin_mount,       handle_admin_mount_impl)
+DEFINE_AUTH_ROUTE(handle_admin_unmount,     handle_admin_unmount_impl)
 
 int main(void) {
   if (getuid() != 0) {
@@ -91,6 +101,15 @@ int main(void) {
   CHTTP_GET(&srv,         "/fs/upload-session/:upload_id",    handle_fs_upload_session_status);
   CHTTP_STREAM_POST(&srv, "/fs/upload-chunk/:upload_id",      handle_fs_upload_chunk);
   CHTTP_DELETE(&srv,      "/fs/upload-session/:upload_id",    handle_fs_upload_session_abort);
+
+  /* Admin management — requires root session */
+  CHTTP_GET(&srv,    "/admin/users",            handle_admin_list_users);
+  CHTTP_POST(&srv,   "/admin/users",            handle_admin_create_user);
+  CHTTP_PUT(&srv,    "/admin/users/:username",   handle_admin_edit_user);
+  CHTTP_DELETE(&srv, "/admin/users/:username",   handle_admin_delete_user);
+  CHTTP_GET(&srv,    "/admin/disks",            handle_admin_list_disks);
+  CHTTP_POST(&srv,   "/admin/disks/mount",      handle_admin_mount);
+  CHTTP_POST(&srv,   "/admin/disks/unmount",    handle_admin_unmount);
 
   /* Static file server — public, no auth */
   CHTTP_STREAM_GET(&srv, "/static/*", handle_static);

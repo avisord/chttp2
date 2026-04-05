@@ -3,6 +3,8 @@ import authReducer from './slices/authSlice'
 import fileSystemReducer from './slices/fileSystemSlice'
 import sessionsReducer from './slices/sessionsSlice'
 import uploadsReducer from './slices/uploadsSlice'
+import usersReducer from './slices/usersSlice'
+import disksReducer from './slices/disksSlice'
 
 export const store = configureStore({
   reducer: {
@@ -10,6 +12,8 @@ export const store = configureStore({
     fileSystem: fileSystemReducer,
     sessions: sessionsReducer,
     uploads: uploadsReducer,
+    users: usersReducer,
+    disks: disksReducer,
   },
 })
 

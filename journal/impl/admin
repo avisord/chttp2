@@ -1,0 +1,143 @@
+User & Disk Management Feature
+
+ Context
+
+ The NAS dashboard needs admin panels for managing system users and disks. These are root-only operations — only visible and functional when the
+ active session belongs to root (uid=0, gid=0).
+
+ Architecture Decision
+
+ Use DEFINE_AUTH_ROUTE for all admin endpoints. Since fork_and_run() drops to the authenticated user's uid, a root session's handler runs as root
+ and can execute privileged operations. Each handler guards with if (getuid() != 0) → 403. This keeps privilege separation intact — non-root users
+  simply get rejected.
+
+ ---
+ Backend
+
+ New files: src/admin/admin.h, src/admin/admin.c, src/admin/disk.c
+
+ User Management Endpoints
+
+ ┌────────┬────────────────────────┬───────────────────────────────┬────────────────────────────────────────────────────────────┐
+ │ Method │          Path          │            Handler            │                           Action                           │
+ ├────────┼────────────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────────┤
+ │ GET    │ /admin/users           │ handle_admin_list_users_impl  │ List users (uid >= 1000) via getpwent() loop               │
+ ├────────┼────────────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────────┤
+ │ POST   │ /admin/users           │ handle_admin_create_user_impl │ useradd -m -s /bin/bash <user> + set password via chpasswd │
+ ├────────┼────────────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────────┤
+ │ PUT    │ /admin/users/:username │ handle_admin_edit_user_impl   │ usermod for shell/groups, chpasswd for password            │
+ ├────────┼────────────────────────┼───────────────────────────────┼────────────────────────────────────────────────────────────┤
+ │ DELETE │ /admin/users/:username │ handle_admin_delete_user_impl │ userdel -r <user>                                          │
+ └────────┴────────────────────────┴───────────────────────────────┴────────────────────────────────────────────────────────────┘
+
+ User JSON shape: { username, uid, gid, home, shell, groups[] }
+
+ For create: { username, password, shell? } body
+ For edit: { password?, shell?, groups? } body — only provided fields are changed
+
+ All handlers: check getuid() != 0 → 403, validate inputs, fork+exec system commands, capture exit code.
+
+ Helper: static int run_command(char *const argv[]) — fork, exec, waitpid, return exit status. Used for useradd/userdel/usermod/chpasswd.
+
+ Disk Management Endpoints
+
+ ┌────────┬──────────────────────┬──────────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+ │ Method │         Path         │           Handler            │                               Action                                │
+ ├────────┼──────────────────────┼──────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ GET    │ /admin/disks         │ handle_admin_list_disks_impl │ lsblk -Jbo NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL,MODEL via popen() │
+ ├────────┼──────────────────────┼──────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ POST   │ /admin/disks/mount   │ handle_admin_mount_impl      │ mount <device> <mountpoint>                                         │
+ ├────────┼──────────────────────┼──────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ POST   │ /admin/disks/unmount │ handle_admin_unmount_impl    │ umount <mountpoint>                                                 │
+ └────────┴──────────────────────┴──────────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+
+ Mount body: { device, mountpoint, fstype? }
+ Unmount body: { mountpoint }
+
+ Registration in main.c
+
+ #include "admin/admin.h"
+
+ DEFINE_AUTH_ROUTE(handle_admin_list_users,  handle_admin_list_users_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_create_user, handle_admin_create_user_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_edit_user,   handle_admin_edit_user_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_delete_user, handle_admin_delete_user_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_list_disks,  handle_admin_list_disks_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_mount,       handle_admin_mount_impl)
+ DEFINE_AUTH_ROUTE(handle_admin_unmount,     handle_admin_unmount_impl)
+
+ // In main():
+ CHTTP_GET(&srv,    "/admin/users",            handle_admin_list_users);
+ CHTTP_POST(&srv,   "/admin/users",            handle_admin_create_user);
+ CHTTP_PUT(&srv,    "/admin/users/:username",   handle_admin_edit_user);
+ CHTTP_DELETE(&srv, "/admin/users/:username",   handle_admin_delete_user);
+ CHTTP_GET(&srv,    "/admin/disks",            handle_admin_list_disks);
+ CHTTP_POST(&srv,   "/admin/disks/mount",      handle_admin_mount);
+ CHTTP_POST(&srv,   "/admin/disks/unmount",    handle_admin_unmount);
+
+ ---
+ Frontend
+
+ 1. Sidebar — conditional admin nav items
+
+ File: frontend/src/components/layout/Sidebar.tsx
+ - Read user from useAppSelector((s) => s.auth.user)
+ - If user?.uid === 0 && user?.gid === 0, show "Users" and "Disks" nav items
+ - Icons: Users and HardDrive from lucide-react
+
+ 2. API module
+
+ New file: frontend/src/api/admin.ts
+ - getUsers() → GET /admin/users
+ - createUser(data) → POST /admin/users
+ - editUser(username, data) → PUT /admin/users/:username
+ - deleteUser(username) → DELETE /admin/users/:username
+ - getDisks() → GET /admin/disks
+ - mountDisk(data) → POST /admin/disks/mount
+ - unmountDisk(data) → POST /admin/disks/unmount
+
+ 3. Types
+
+ File: frontend/src/types/api.ts — add:
+ interface SystemUser { username: string; uid: number; gid: number; home: string; shell: string; groups: string[] }
+ interface DiskInfo { name: string; size: number; type: string; fstype: string | null; mountpoint: string | null; label: string | null; model:
+ string | null; children?: DiskInfo[] }
+
+ 4. Store slices
+
+ New files:
+ - frontend/src/store/slices/usersSlice.ts — { users: SystemUser[], status } with fetch/create/edit/delete thunks
+ - frontend/src/store/slices/disksSlice.ts — { disks: DiskInfo[], status } with fetch/mount/unmount thunks
+
+ Register both in frontend/src/store/index.ts.
+
+ 5. Components & Pages
+
+ User management:
+ - frontend/src/components/admin/UserCard.tsx — displays user info with edit/delete buttons
+ - frontend/src/components/admin/UserList.tsx — fetches and lists users, "Add User" button
+ - frontend/src/components/admin/UserDialog.tsx — dialog for add/edit user form (username, password, shell fields)
+ - frontend/src/pages/UsersPage.tsx — page wrapper
+
+ Disk management:
+ - frontend/src/components/admin/DiskCard.tsx — displays disk/partition info with mount/unmount button
+ - frontend/src/components/admin/DiskList.tsx — fetches and lists disks
+ - frontend/src/components/admin/MountDialog.tsx — dialog for mount form (device, mountpoint, fstype)
+ - frontend/src/pages/DisksPage.tsx — page wrapper
+
+ 6. Routes
+
+ File: frontend/src/App.tsx — add inside protected AppShell:
+ <Route path="/users" element={<UsersPage />} />
+ <Route path="/disks" element={<DisksPage />} />
+
+ ---
+ Verification
+
+ 1. make — zero warnings
+ 2. cd frontend && npx tsc --noEmit — no type errors
+ 3. Login as root → sidebar shows Users + Disks links
+ 4. Login as non-root → sidebar hides them; API returns 403
+ 5. Users page: list, add, edit password/shell, delete users
+ 6. Disks page: list block devices, mount/unmount
+
