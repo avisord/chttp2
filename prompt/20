@@ -1,0 +1,20 @@
+read the project and make a detailed plan for making the frontend for this
+
+feat: create dashboard for all the existing api endpoints
+
+stack: react (vite), typescript, tailwindcss, shadcn ui, redux toolkit
+
+use skill: fontend design skill
+
+api entrypoint are avaible at: /src/main.c
+
+
+---
+
+use purly frontend design skill which is at: .claude/skills/* 
+and do not use any styles of previsouly made poc
+then redesign the current frontend ui and to meet those standards in frontend design skill
+
+--- 
+
+
