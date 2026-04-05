@@ -4,15 +4,18 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { fetchDisksThunk, mountDiskThunk, unmountDiskThunk } from '@/store/slices/disksSlice'
+import { fetchDisksThunk, mountDiskThunk, unmountDiskThunk, formatDiskThunk } from '@/store/slices/disksSlice'
 import DiskCard from './DiskCard'
 import MountDialog from './MountDialog'
+import FormatDialog from './FormatDialog'
 
 export default function DiskList() {
   const dispatch = useAppDispatch()
   const { disks, status } = useAppSelector((s) => s.disks)
   const [mountDialogOpen, setMountDialogOpen] = useState(false)
   const [mountDevice, setMountDevice] = useState('')
+  const [formatDialogOpen, setFormatDialogOpen] = useState(false)
+  const [formatDevice, setFormatDevice] = useState('')
 
   useEffect(() => {
     dispatch(fetchDisksThunk())
@@ -38,6 +41,20 @@ export default function DiskList() {
       toast.success(`Unmounted ${mountpoint}`)
     } catch {
       toast.error('Failed to unmount device')
+    }
+  }
+
+  const handleFormat = (device: string) => {
+    setFormatDevice(device)
+    setFormatDialogOpen(true)
+  }
+
+  const handleFormatSubmit = async (data: { device: string; fstype: string }) => {
+    try {
+      await dispatch(formatDiskThunk(data)).unwrap()
+      toast.success(`Formatted ${data.device} as ${data.fstype}`)
+    } catch {
+      toast.error('Failed to format device')
     }
   }
 
@@ -68,6 +85,7 @@ export default function DiskList() {
               disk={disk}
               onMount={handleMount}
               onUnmount={handleUnmount}
+              onFormat={handleFormat}
             />
           ))}
         </div>
@@ -78,6 +96,12 @@ export default function DiskList() {
         onOpenChange={setMountDialogOpen}
         device={mountDevice}
         onSubmit={handleMountSubmit}
+      />
+      <FormatDialog
+        open={formatDialogOpen}
+        onOpenChange={setFormatDialogOpen}
+        device={formatDevice}
+        onSubmit={handleFormatSubmit}
       />
     </div>
   )

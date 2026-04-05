@@ -25,6 +25,14 @@ export const mountDiskThunk = createAsyncThunk(
   },
 )
 
+export const formatDiskThunk = createAsyncThunk(
+  'disks/format',
+  async (data: { device: string; fstype: string }, { dispatch }) => {
+    await adminApi.formatDisk(data)
+    dispatch(fetchDisksThunk())
+  },
+)
+
 export const unmountDiskThunk = createAsyncThunk(
   'disks/unmount',
   async (data: { mountpoint: string }, { dispatch }) => {

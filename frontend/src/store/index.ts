@@ -5,6 +5,7 @@ import sessionsReducer from './slices/sessionsSlice'
 import uploadsReducer from './slices/uploadsSlice'
 import usersReducer from './slices/usersSlice'
 import disksReducer from './slices/disksSlice'
+import bookmarksReducer from './slices/bookmarksSlice'
 
 export const store = configureStore({
   reducer: {
@@ -14,6 +15,7 @@ export const store = configureStore({
     uploads: uploadsReducer,
     users: usersReducer,
     disks: disksReducer,
+    bookmarks: bookmarksReducer,
   },
 })
 

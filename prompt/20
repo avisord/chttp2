@@ -90,12 +90,17 @@ need active root session to manage user and disk
 
 ---
 
-feat: allow different paths (fronted change)
+feat: allow different paths prefix alias 
 - / root
 - /home/<user> home
-- /home/<user>/.imaginary/trash trash
+- /home/<user>/.imaginary/trash trash (will be implemented later)
 
+keep these in a file (.imaginary/paths)
+- means user can extend the path alias list
 
+for frontend keep the ui/ux exact same as gnome file manager
 
+basically what we want when we right click on any folder context menu should have an option to add to places in the sidebar, and this
+information should be placed in server in ~/.imaginary/places
 
-
+---

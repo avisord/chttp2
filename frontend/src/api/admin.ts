@@ -42,6 +42,13 @@ export function mountDisk(data: { device: string; mountpoint: string; fstype?: s
   })
 }
 
+export function formatDisk(data: { device: string; fstype: string }) {
+  return apiRequest<{ message: string }>('/admin/disks/format', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 export function unmountDisk(data: { mountpoint: string }) {
   return apiRequest<{ message: string }>('/admin/disks/unmount', {
     method: 'POST',

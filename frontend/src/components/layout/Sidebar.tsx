@@ -2,11 +2,7 @@ import { FolderOpen, Settings, HardDrive, Users } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useAppSelector } from '@/store/hooks'
-
-const navItems = [
-  { to: '/', icon: FolderOpen, label: 'Files' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
-]
+import PlacesPanel from '@/components/files/PlacesPanel'
 
 const adminItems = [
   { to: '/users', icon: Users, label: 'Users' },
@@ -36,13 +32,19 @@ function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ComponentT
 export default function Sidebar() {
   const user = useAppSelector((s) => s.auth.user)
   const isRoot = user?.uid === 0 && user?.gid === 0
-
   return (
     <aside className="flex w-56 flex-col border-r border-slate-200 bg-white">
-      <nav className="flex flex-1 flex-col gap-1 p-3 pt-4">
-        {navItems.map((item) => (
-          <NavItem key={item.to} {...item} />
-        ))}
+      <nav className="flex flex-1 flex-col gap-1 overflow-auto p-3 pt-4">
+        <NavItem to="/" icon={FolderOpen} label="Files" />
+
+        <div className="mx-0 my-1.5 border-t border-slate-100" />
+        <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          Places
+        </span>
+        <PlacesPanel />
+
+        <hr className="mx-0 my-1.5 border-slate-200" />
+        <NavItem to="/settings" icon={Settings} label="Settings" />
 
         {isRoot && (
           <>

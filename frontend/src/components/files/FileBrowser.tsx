@@ -19,6 +19,7 @@ import {
 } from '@/store/slices/fileSystemSlice'
 import { addUpload, updateProgress, setUploadStatus } from '@/store/slices/uploadsSlice'
 import { simpleUpload, downloadFile } from '@/api/filesystem'
+import { addBookmarkThunk } from '@/store/slices/bookmarksSlice'
 import { getFileViewType, getDownloadUrl } from '@/lib/fileTypes'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { FileEntry } from '@/types/api'
@@ -658,6 +659,12 @@ export default function FileBrowser() {
               onInfo={() => {
                 if (!contextEntry) return
                 openProperties(contextEntry)
+              }}
+              onBookmark={() => {
+                if (!contextEntry || contextEntry.type !== 'dir') return
+                const fullPath = resolvePath(contextEntry.name)
+                dispatch(addBookmarkThunk({ path: fullPath, label: contextEntry.name }))
+                toast.success(`Bookmarked "${contextEntry.name}"`)
               }}
               onNewFolder={() => setNewFolderOpen(true)}
               onUpload={() => fileInputRef.current?.click()}

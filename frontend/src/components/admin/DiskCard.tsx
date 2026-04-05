@@ -1,4 +1,4 @@
-import { HardDrive, Disc, Unplug } from 'lucide-react'
+import { HardDrive, Disc, Unplug, Eraser } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { DiskInfo } from '@/types/api'
@@ -14,11 +14,17 @@ interface DiskCardProps {
   disk: DiskInfo
   onMount: (device: string) => void
   onUnmount: (mountpoint: string) => void
+  onFormat: (device: string) => void
 }
 
-export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
+export default function DiskCard({ disk, onMount, onUnmount, onFormat }: DiskCardProps) {
   const isMounted = !!disk.mountpoint
   const isDisk = disk.type === 'disk'
+  const isLoop = disk.type === 'loop'
+  const hasFs = !!disk.fstype
+  const hasChildren = !!disk.children?.length
+  const isBlank = isDisk && !hasFs && !hasChildren
+  const isMountable = disk.type === 'part' || (isDisk && hasFs && !hasChildren)
   const Icon = isDisk ? HardDrive : Disc
 
   return (
@@ -38,6 +44,11 @@ export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
                 mounted
               </Badge>
             )}
+            {isBlank && (
+              <Badge variant="outline" className="gap-1 border-amber-200 bg-amber-50 text-amber-700 text-xs">
+                unformatted
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-3 text-xs text-slate-400">
             <span>{formatSize(disk.size)}</span>
@@ -48,7 +59,18 @@ export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
           </div>
         </div>
         <div className="flex gap-1">
-          {(disk.type === 'part' || (disk.type === 'disk' && disk.fstype && !disk.children?.length)) && (
+          {isBlank && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-500 hover:bg-amber-50 hover:text-amber-600"
+              onClick={() => onFormat(`/dev/${disk.name}`)}
+            >
+              <Eraser className="mr-1.5 h-3.5 w-3.5" />
+              Format
+            </Button>
+          )}
+          {isMountable && (
             isMounted ? (
               <Button
                 variant="ghost"
@@ -71,6 +93,17 @@ export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
               </Button>
             )
           )}
+          {!isBlank && !isMountable && !isMounted && !isLoop && !hasChildren && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-slate-500 hover:bg-amber-50 hover:text-amber-600"
+              onClick={() => onFormat(`/dev/${disk.name}`)}
+            >
+              <Eraser className="mr-1.5 h-3.5 w-3.5" />
+              Format
+            </Button>
+          )}
         </div>
       </div>
 
@@ -78,7 +111,7 @@ export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
       {disk.children && disk.children.length > 0 && (
         <div className="border-t border-slate-50 pl-8">
           {disk.children.map((child) => (
-            <DiskCard key={child.name} disk={child} onMount={onMount} onUnmount={onUnmount} />
+            <DiskCard key={child.name} disk={child} onMount={onMount} onUnmount={onUnmount} onFormat={onFormat} />
           ))}
         </div>
       )}
