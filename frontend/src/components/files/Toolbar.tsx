@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from 'react'
-import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download, Search, X } from 'lucide-react'
+import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download, Search, X, Minus, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { setViewMode, setSortBy } from '@/store/slices/fileSystemSlice'
+import { setViewMode, setIconSize, setSortBy } from '@/store/slices/fileSystemSlice'
 
 interface ToolbarProps {
   onNewFolder: () => void
@@ -18,6 +18,7 @@ interface ToolbarProps {
   onBulkDownload: () => void
   searchQuery: string
   onSearchChange: (value: string) => void
+  onSearchKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
   searchInputRef: RefObject<HTMLInputElement | null>
 }
 
@@ -28,10 +29,11 @@ export default function Toolbar({
   onBulkDownload,
   searchQuery,
   onSearchChange,
+  onSearchKeyDown,
   searchInputRef,
 }: ToolbarProps) {
   const dispatch = useAppDispatch()
-  const { viewMode, sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
+  const { viewMode, iconSize, sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hasSelection = selectedPaths.length > 0
 
@@ -44,6 +46,7 @@ export default function Toolbar({
             ref={searchInputRef}
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={onSearchKeyDown}
             placeholder="Search in this folder"
             className="h-9 border-slate-200 bg-slate-50 pl-9 pr-9 text-sm focus-visible:bg-white"
             aria-label="Search files in current folder"
@@ -113,6 +116,28 @@ export default function Toolbar({
             <DropdownMenuItem onClick={() => dispatch(setSortBy('modified'))}>Modified</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {viewMode === 'grid' && (
+          <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 p-0.5">
+            <button
+              onClick={() => dispatch(setIconSize(iconSize - 1))}
+              disabled={iconSize <= 1}
+              className="rounded-md p-1.5 text-slate-400 transition-all hover:text-slate-600 disabled:opacity-30 disabled:hover:text-slate-400"
+              aria-label="Decrease icon size"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <span className="min-w-[1.25rem] text-center text-xs font-medium text-slate-500">{iconSize}</span>
+            <button
+              onClick={() => dispatch(setIconSize(iconSize + 1))}
+              disabled={iconSize >= 4}
+              className="rounded-md p-1.5 text-slate-400 transition-all hover:text-slate-600 disabled:opacity-30 disabled:hover:text-slate-400"
+              aria-label="Increase icon size"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         <div className="ml-1 flex rounded-lg border border-slate-200 p-0.5">
           <button

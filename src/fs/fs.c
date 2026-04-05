@@ -55,6 +55,10 @@ void handle_fs_list_impl(HttpRequest *req, HttpResponse *res) {
     cJSON_AddStringToObject(e, "type", S_ISDIR(st.st_mode) ? "dir" : "file");
     cJSON_AddNumberToObject(e, "size", S_ISDIR(st.st_mode) ? 0 : (double)st.st_size);
     cJSON_AddStringToObject(e, "modified", mtime_str);
+    cJSON_AddStringToObject(
+        e,
+        "mime",
+        S_ISDIR(st.st_mode) ? "inode/directory" : mime_from_ext(full));
     cJSON_AddItemToArray(entries, e);
   }
   closedir(dp);
@@ -393,6 +397,10 @@ void handle_fs_stat_impl(HttpRequest *req, HttpResponse *res) {
   cJSON_AddStringToObject(obj, "mode", mode_str);
   cJSON_AddNumberToObject(obj, "uid", (double)st.st_uid);
   cJSON_AddStringToObject(obj, "modified", mtime_str);
+  cJSON_AddStringToObject(
+      obj,
+      "mime",
+      S_ISDIR(st.st_mode) ? "inode/directory" : mime_from_ext(path));
 
   chttp_send_cjson(res, obj);
   cJSON_Delete(obj);

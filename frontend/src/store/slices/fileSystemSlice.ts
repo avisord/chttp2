@@ -8,6 +8,7 @@ interface FileSystemState {
   status: 'idle' | 'loading' | 'error'
   error: string | null
   viewMode: 'grid' | 'list'
+  iconSize: number
   sortBy: 'name' | 'size' | 'modified'
   sortOrder: 'asc' | 'desc'
   selectedPaths: string[]
@@ -23,6 +24,7 @@ const initialState: FileSystemState = {
   status: 'idle',
   error: null,
   viewMode: (localStorage.getItem('viewMode') as 'grid' | 'list') || 'grid',
+  iconSize: Number(localStorage.getItem('iconSize')) || 2,
   sortBy: 'name',
   sortOrder: 'asc',
   selectedPaths: [],
@@ -114,6 +116,10 @@ const fileSystemSlice = createSlice({
       state.viewMode = action.payload
       localStorage.setItem('viewMode', action.payload)
     },
+    setIconSize(state, action: PayloadAction<number>) {
+      state.iconSize = Math.max(1, Math.min(4, action.payload))
+      localStorage.setItem('iconSize', String(state.iconSize))
+    },
     setSortBy(state, action: PayloadAction<'name' | 'size' | 'modified'>) {
       if (state.sortBy === action.payload) {
         state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc'
@@ -174,6 +180,7 @@ const fileSystemSlice = createSlice({
 export const {
   setCurrentPath,
   setViewMode,
+  setIconSize,
   setSortBy,
   setSelectedPaths,
   toggleSelect,

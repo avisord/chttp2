@@ -12,6 +12,7 @@ export interface FileEntry {
   type: 'file' | 'dir'
   size: number
   modified: string
+  mime: string
 }
 
 export interface DirListResponse {
@@ -27,6 +28,7 @@ export interface FileStat {
   mode: string
   uid: number
   modified: string
+  mime: string
 }
 
 export interface FileContentResponse {

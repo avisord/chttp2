@@ -12,33 +12,73 @@ function formatSize(bytes: number): string {
 interface FileCardProps {
   entry: FileEntry
   selected: boolean
+  focused: boolean
+  iconSize: number
   onClick: (e: React.MouseEvent) => void
   onDoubleClick: () => void
   onContextMenu: (e: React.MouseEvent) => void
+  onFocus: () => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+  itemRef?: (node: HTMLDivElement | null) => void
 }
 
-export default function FileCard({ entry, selected, onClick, onDoubleClick, onContextMenu }: FileCardProps) {
+export default function FileCard({
+  entry,
+  selected,
+  focused,
+  iconSize,
+  onClick,
+  onDoubleClick,
+  onContextMenu,
+  onFocus,
+  onKeyDown,
+  itemRef,
+}: FileCardProps) {
+  const sizeMap: Record<number, { icon: string; container: string; text: string; subtext: string; padding: string; gap: string }> = {
+    1: { icon: 'h-10 w-10', container: 'h-12', text: 'text-xs', subtext: 'text-[0.65rem]', padding: 'px-1.5 py-1.5', gap: 'gap-0.5' },
+    2: { icon: 'h-[4.25rem] w-[4.25rem]', container: 'h-20', text: 'text-sm', subtext: 'text-xs', padding: 'px-2 py-2', gap: 'gap-1' },
+    3: { icon: 'h-24 w-24', container: 'h-28', text: 'text-base', subtext: 'text-sm', padding: 'px-2.5 py-2.5', gap: 'gap-1' },
+    4: { icon: 'h-32 w-32', container: 'h-36', text: 'text-lg', subtext: 'text-sm', padding: 'px-3 py-3', gap: 'gap-1.5' },
+  }
+  const sizes = sizeMap[iconSize] ?? sizeMap[2]
+  const iconSizeClass = sizes.icon
+
   return (
     <div
+      ref={itemRef}
+      role="option"
+      aria-selected={selected}
+      tabIndex={focused ? 0 : -1}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      onFocus={onFocus}
+      onKeyDown={onKeyDown}
       className={cn(
-        'group flex cursor-pointer flex-col items-center gap-2.5 rounded-xl border bg-white p-4 transition-all duration-200',
-        'hover:-translate-y-1 hover:shadow-[0_10px_25px_-5px_rgba(79,70,229,0.15),0_8px_10px_-6px_rgba(79,70,229,0.1)]',
+        'group flex cursor-pointer flex-col items-center rounded-xl outline-none transition-all duration-150',
+        sizes.padding,
+        sizes.gap,
         selected
-          ? 'border-indigo-300 bg-indigo-50/50 shadow-[0_4px_20px_-2px_rgba(79,70,229,0.15)]'
-          : 'border-slate-100 shadow-[0_4px_20px_-2px_rgba(79,70,229,0.06)] hover:border-slate-200',
+          ? 'bg-indigo-50/70'
+          : 'hover:bg-slate-50/80',
+        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-white',
       )}
     >
       <div className={cn(
-        'flex h-12 w-12 items-center justify-center rounded-xl transition-colors',
-        entry.type === 'dir' ? 'bg-indigo-50' : 'bg-slate-50',
+        'flex w-full items-center justify-center rounded-lg transition-transform duration-150 group-hover:scale-[1.03]',
+        sizes.container,
       )}>
-        <FileIcon name={entry.name} type={entry.type} className="h-6 w-6" />
+        <FileIcon
+          name={entry.name}
+          type={entry.type}
+          mime={entry.mime}
+          className={iconSizeClass}
+        />
       </div>
-      <span className="w-full truncate text-center text-sm font-semibold text-slate-900">{entry.name}</span>
-      <span className="text-xs text-slate-400">
+      <span className={cn('w-full break-words text-center leading-5 font-medium text-slate-800', sizes.text)}>
+        {entry.name}
+      </span>
+      <span className={cn('text-slate-400', sizes.subtext)}>
         {entry.type === 'dir' ? 'Folder' : formatSize(entry.size)}
       </span>
     </div>

@@ -40,10 +40,10 @@ export default function FileBrowser() {
     entries,
     status,
     viewMode,
+    iconSize,
     sortBy,
     sortOrder,
     selectedPaths,
-    previewFile,
     clipboard,
   } = useAppSelector((s) => s.fileSystem)
 
@@ -55,9 +55,14 @@ export default function FileBrowser() {
   const [dragging, setDragging] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOriginPath, setSearchOriginPath] = useState<string | null>(null)
+  const [contextEntry, setContextEntry] = useState<FileEntry | null>(null)
+  const [activePath, setActivePath] = useState<string | null>(null)
+  const [gridColumnCount, setGridColumnCount] = useState(1)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const lastClickedRef = useRef<string | null>(null)
+  const itemRefs = useRef(new Map<string, HTMLDivElement | null>())
+  const shouldFocusActiveRef = useRef(false)
 
   // Sync path from URL on mount
   useEffect(() => {
@@ -90,11 +95,29 @@ export default function FileBrowser() {
     return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query))
   }, [searchQuery, sortedEntries])
 
+  const effectiveActivePath = useMemo(() => {
+    if (!filteredEntries.length) return null
+    if (activePath && filteredEntries.some((entry) => entry.name === activePath)) return activePath
+    const preferred = selectedPaths.find((path) => filteredEntries.some((entry) => entry.name === path))
+    return preferred ?? null
+  }, [activePath, filteredEntries, selectedPaths])
+
+  useEffect(() => {
+    if (!effectiveActivePath || !shouldFocusActiveRef.current) return
+    const node = itemRefs.current.get(effectiveActivePath)
+    if (!node) return
+    node.focus()
+    shouldFocusActiveRef.current = false
+  }, [effectiveActivePath, viewMode])
+
+
   const navigateTo = useCallback(
     (path: string) => {
       dispatch(setCurrentPath(path))
       dispatch(listDirThunk(path))
       setSearchParams(path === '.' ? {} : { path })
+      setSearchQuery('')
+      setSearchOriginPath(null)
     },
     [dispatch, setSearchParams],
   )
@@ -135,6 +158,8 @@ export default function FileBrowser() {
 
   const handleItemClick = useCallback(
     (entry: FileEntry, e: React.MouseEvent) => {
+      setActivePath(entry.name)
+      setContextEntry(entry)
       if (e.ctrlKey || e.metaKey) {
         dispatch(toggleSelect(entry.name))
       } else if (e.shiftKey && lastClickedRef.current) {
@@ -145,7 +170,6 @@ export default function FileBrowser() {
         dispatch(setSelectedPaths(range))
       } else {
         dispatch(setSelectedPaths([entry.name]))
-        dispatch(setPreviewFile(entry))
       }
       lastClickedRef.current = entry.name
     },
@@ -156,11 +180,9 @@ export default function FileBrowser() {
     (entry: FileEntry) => {
       if (entry.type === 'dir') {
         navigateTo(resolvePath(entry.name))
-      } else {
-        dispatch(setPreviewFile(entry))
       }
     },
-    [dispatch, navigateTo, resolvePath],
+    [navigateTo, resolvePath],
   )
 
   const handleUploadFiles = useCallback(
@@ -224,6 +246,167 @@ export default function FileBrowser() {
     toast.success(`${clipboard.operation === 'copy' ? 'Copied' : 'Moved'} ${clipboard.paths.length} item${clipboard.paths.length > 1 ? 's' : ''}`)
   }, [clipboard, dispatch, resolvePath])
 
+  const getItemRef = useCallback(
+    (name: string) => (node: HTMLDivElement | null) => {
+      if (node) itemRefs.current.set(name, node)
+      else itemRefs.current.delete(name)
+    },
+    [],
+  )
+
+  const focusEntryByIndex = useCallback((index: number, focus = true) => {
+    const clampedIndex = Math.max(0, Math.min(index, filteredEntries.length - 1))
+    const nextEntry = filteredEntries[clampedIndex]
+    if (!nextEntry) return null
+    setActivePath(nextEntry.name)
+    setContextEntry(nextEntry)
+    if (focus) shouldFocusActiveRef.current = true
+    return nextEntry
+  }, [filteredEntries])
+
+  const selectRangeToEntry = useCallback((targetName: string) => {
+    const names = filteredEntries.map((entry) => entry.name)
+    const anchorName = lastClickedRef.current ?? effectiveActivePath ?? targetName
+    const start = names.indexOf(anchorName)
+    const end = names.indexOf(targetName)
+    if (start === -1 || end === -1) {
+      dispatch(setSelectedPaths([targetName]))
+      return
+    }
+
+    dispatch(setSelectedPaths(names.slice(Math.min(start, end), Math.max(start, end) + 1)))
+  }, [dispatch, effectiveActivePath, filteredEntries])
+
+  const openProperties = useCallback((entry: FileEntry) => {
+    dispatch(setPreviewFile(entry))
+    setContextEntry(entry)
+    setActivePath(entry.name)
+  }, [dispatch])
+
+  const focusFirstEntryFromSearch = useCallback(() => {
+    if (!filteredEntries.length) return
+    const nextEntry = filteredEntries.find((entry) => entry.name === effectiveActivePath) ?? filteredEntries[0]
+    setActivePath(nextEntry.name)
+    setContextEntry(nextEntry)
+    dispatch(setSelectedPaths([nextEntry.name]))
+    lastClickedRef.current = nextEntry.name
+    // Directly focus the DOM node — the effect won't fire if effectiveActivePath didn't change
+    const node = itemRefs.current.get(nextEntry.name)
+    if (node) node.focus()
+    else shouldFocusActiveRef.current = true
+  }, [dispatch, effectiveActivePath, filteredEntries])
+
+  const focusActiveEntry = useCallback(() => {
+    if (!filteredEntries.length) return
+    const nextEntry = filteredEntries.find((entry) => entry.name === effectiveActivePath) ?? filteredEntries[0]
+    setActivePath(nextEntry.name)
+    setContextEntry(nextEntry)
+    const node = itemRefs.current.get(nextEntry.name)
+    if (node) node.focus()
+    else shouldFocusActiveRef.current = true
+  }, [effectiveActivePath, filteredEntries])
+
+  const handleItemKeyDown = useCallback((entry: FileEntry, e: React.KeyboardEvent) => {
+    const currentIndex = filteredEntries.findIndex((item) => item.name === entry.name)
+    if (currentIndex === -1) return
+
+    const moveTo = (index: number) => {
+      const nextEntry = focusEntryByIndex(index)
+      if (!nextEntry) return
+
+      if (e.shiftKey) {
+        selectRangeToEntry(nextEntry.name)
+      } else if (!(e.ctrlKey || e.metaKey)) {
+        dispatch(setSelectedPaths([nextEntry.name]))
+        lastClickedRef.current = nextEntry.name
+      }
+    }
+
+    switch (e.key) {
+      case 'ArrowRight':
+        e.preventDefault()
+        moveTo(viewMode === 'grid' ? currentIndex + 1 : currentIndex)
+        return
+      case 'ArrowLeft':
+        e.preventDefault()
+        moveTo(viewMode === 'grid' ? currentIndex - 1 : currentIndex)
+        return
+      case 'ArrowDown':
+        e.preventDefault()
+        moveTo(viewMode === 'grid' ? currentIndex + gridColumnCount : currentIndex + 1)
+        return
+      case 'ArrowUp':
+        e.preventDefault()
+        moveTo(viewMode === 'grid' ? currentIndex - gridColumnCount : currentIndex - 1)
+        return
+      case 'Home':
+        e.preventDefault()
+        moveTo(0)
+        return
+      case 'End':
+        e.preventDefault()
+        moveTo(filteredEntries.length - 1)
+        return
+      case 'Enter':
+        e.preventDefault()
+        handleItemDoubleClick(entry)
+        return
+      case ' ':
+        e.preventDefault()
+        setContextEntry(entry)
+        setActivePath(entry.name)
+        if (e.ctrlKey || e.metaKey) {
+          dispatch(toggleSelect(entry.name))
+        } else if (e.shiftKey) {
+          selectRangeToEntry(entry.name)
+        } else {
+          dispatch(setSelectedPaths([entry.name]))
+          lastClickedRef.current = entry.name
+        }
+        return
+      case 'F2':
+        e.preventDefault()
+        dispatch(setSelectedPaths([entry.name]))
+        setRenameTarget(entry.name)
+        setRenameOpen(true)
+        return
+      case 'Delete':
+        e.preventDefault()
+        setDeleteTargets(selectedPaths.includes(entry.name) ? selectedPaths : [entry.name])
+        setDeleteOpen(true)
+        return
+      default:
+        if (e.altKey && e.key === 'Enter') {
+          e.preventDefault()
+          openProperties(entry)
+        }
+    }
+  }, [
+    dispatch,
+    filteredEntries,
+    focusEntryByIndex,
+    gridColumnCount,
+    handleItemDoubleClick,
+    openProperties,
+    selectRangeToEntry,
+    selectedPaths,
+    viewMode,
+  ])
+
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusFirstEntryFromSearch()
+      return
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      clearSearch(false)
+      focusActiveEntry()
+    }
+  }, [clearSearch, focusActiveEntry, focusFirstEntryFromSearch])
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -240,10 +423,17 @@ export default function FileBrowser() {
         searchInputRef.current?.blur()
         dispatch(clearSelection())
         dispatch(setPreviewFile(null))
+        focusActiveEntry()
         return
       }
 
       if (isEditableTarget) return
+
+      if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault()
+        focusFirstEntryFromSearch()
+        return
+      }
 
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
         e.preventDefault()
@@ -255,6 +445,13 @@ export default function FileBrowser() {
         e.preventDefault()
         setDeleteTargets(selectedPaths)
         setDeleteOpen(true)
+      }
+      if (e.altKey && e.key === 'Enter' && effectiveActivePath) {
+        const activeEntry = filteredEntries.find((entry) => entry.name === effectiveActivePath)
+        if (activeEntry) {
+          e.preventDefault()
+          openProperties(activeEntry)
+        }
       }
       if (e.key === 'F2' && selectedPaths.length === 1) {
         e.preventDefault()
@@ -280,8 +477,11 @@ export default function FileBrowser() {
         handlePaste()
       }
       if (e.key === 'Escape') {
+        e.preventDefault()
+        if (searchQuery) clearSearch(false)
         dispatch(clearSelection())
         dispatch(setPreviewFile(null))
+        setContextEntry(null)
       }
       if (e.key === 'Backspace' && !selectedPaths.length && currentPath !== '.') {
         e.preventDefault()
@@ -303,6 +503,10 @@ export default function FileBrowser() {
     searchQuery,
     startSearch,
     clearSearch,
+    effectiveActivePath,
+    focusActiveEntry,
+    focusFirstEntryFromSearch,
+    openProperties,
   ])
 
   // Drag and drop
@@ -359,6 +563,7 @@ export default function FileBrowser() {
           }}
           searchQuery={searchQuery}
           onSearchChange={updateSearchQuery}
+          onSearchKeyDown={handleSearchKeyDown}
           searchInputRef={searchInputRef}
         />
       </div>
@@ -367,7 +572,10 @@ export default function FileBrowser() {
         <div
           className="flex-1 overflow-auto p-5"
           onClick={(e) => {
-            if (e.target === e.currentTarget) dispatch(clearSelection())
+            if (e.target === e.currentTarget) {
+              dispatch(clearSelection())
+              setContextEntry(null)
+            }
           }}
         >
           {status === 'loading' && !entries.length ? (
@@ -390,6 +598,34 @@ export default function FileBrowser() {
             </div>
           ) : (
             <FileContextMenu
+              entry={contextEntry ?? undefined}
+              onOpen={() => {
+                if (!contextEntry) return
+                handleItemDoubleClick(contextEntry)
+              }}
+              onDownload={() => {
+                if (!contextEntry || contextEntry.type !== 'file') return
+                downloadFile(resolvePath(contextEntry.name), contextEntry.name)
+              }}
+              onRename={() => {
+                if (!contextEntry) return
+                setRenameTarget(contextEntry.name)
+                setRenameOpen(true)
+              }}
+              onCopy={() => {
+                if (!contextEntry) return
+                dispatch(setClipboard({ operation: 'copy', paths: [resolvePath(contextEntry.name)] }))
+                toast('Copied to clipboard')
+              }}
+              onDelete={() => {
+                if (!contextEntry) return
+                setDeleteTargets([contextEntry.name])
+                setDeleteOpen(true)
+              }}
+              onInfo={() => {
+                if (!contextEntry) return
+                openProperties(contextEntry)
+              }}
               onNewFolder={() => setNewFolderOpen(true)}
               onUpload={() => fileInputRef.current?.click()}
               onRefresh={() => dispatch(listDirThunk(currentPath))}
@@ -399,23 +635,43 @@ export default function FileBrowser() {
                   <FileGrid
                     entries={filteredEntries}
                     selectedPaths={selectedPaths}
+                    activePath={effectiveActivePath}
+                    iconSize={iconSize}
                     onItemClick={handleItemClick}
                     onItemDoubleClick={handleItemDoubleClick}
                     onItemContextMenu={(entry, e) => {
                       e.preventDefault()
                       dispatch(setSelectedPaths([entry.name]))
+                      setActivePath(entry.name)
+                      setContextEntry(entry)
                     }}
+                    onItemFocus={(entry) => {
+                      setActivePath(entry.name)
+                      setContextEntry(entry)
+                    }}
+                    onItemKeyDown={handleItemKeyDown}
+                    onColumnCountChange={setGridColumnCount}
+                    getItemRef={getItemRef}
                   />
                 ) : (
                   <FileList
                     entries={filteredEntries}
                     selectedPaths={selectedPaths}
+                    activePath={effectiveActivePath}
                     onItemClick={handleItemClick}
                     onItemDoubleClick={handleItemDoubleClick}
                     onItemContextMenu={(entry, e) => {
                       e.preventDefault()
                       dispatch(setSelectedPaths([entry.name]))
+                      setActivePath(entry.name)
+                      setContextEntry(entry)
                     }}
+                    onItemFocus={(entry) => {
+                      setActivePath(entry.name)
+                      setContextEntry(entry)
+                    }}
+                    onItemKeyDown={handleItemKeyDown}
+                    getItemRef={getItemRef}
                   />
                 )}
               </div>
@@ -434,8 +690,9 @@ export default function FileBrowser() {
           />
         </div>
 
-        {previewFile && <FilePreview />}
       </div>
+
+      <FilePreview />
 
       {/* Dialogs */}
       <NewFolderDialog open={newFolderOpen} onOpenChange={setNewFolderOpen} />

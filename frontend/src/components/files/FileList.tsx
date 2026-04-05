@@ -4,20 +4,28 @@ import type { FileEntry } from '@/types/api'
 interface FileListProps {
   entries: FileEntry[]
   selectedPaths: string[]
+  activePath: string | null
   onItemClick: (entry: FileEntry, e: React.MouseEvent) => void
   onItemDoubleClick: (entry: FileEntry) => void
   onItemContextMenu: (entry: FileEntry, e: React.MouseEvent) => void
+  onItemFocus: (entry: FileEntry) => void
+  onItemKeyDown: (entry: FileEntry, e: React.KeyboardEvent) => void
+  getItemRef: (name: string) => (node: HTMLDivElement | null) => void
 }
 
 export default function FileList({
   entries,
   selectedPaths,
+  activePath,
   onItemClick,
   onItemDoubleClick,
   onItemContextMenu,
+  onItemFocus,
+  onItemKeyDown,
+  getItemRef,
 }: FileListProps) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div role="listbox" aria-label="Files" className="flex flex-col gap-0.5">
       <div className="flex items-center gap-3 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
         <span className="w-5" />
         <span className="flex-1">Name</span>
@@ -29,9 +37,13 @@ export default function FileList({
           key={entry.name}
           entry={entry}
           selected={selectedPaths.includes(entry.name)}
+          focused={activePath === entry.name}
           onClick={(e) => onItemClick(entry, e)}
           onDoubleClick={() => onItemDoubleClick(entry)}
           onContextMenu={(e) => onItemContextMenu(entry, e)}
+          onFocus={() => onItemFocus(entry)}
+          onKeyDown={(e) => onItemKeyDown(entry, e)}
+          itemRef={getItemRef(entry.name)}
         />
       ))}
     </div>

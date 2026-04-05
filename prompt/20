@@ -23,3 +23,70 @@ automatically trigger search and these charaters will be entered in serach bar a
 - on escape (pressing esc) search will be cleared and navigates back to the same directory
 
 ---
+
+feat: implement material design icons:
+repository: https://github.com/material-extensions/material-icons-browser-extension 
+references: https://marketplace.visualstudio.com/items?itemName=PKief.material-icon-theme
+- do it something like use material icons based on the file name/extesion/mime type etc
+similarly like vscode material icon theme
+
+---
+
+fix: update file icons:
+description: use icon sizing of file and folder like as in image 
+image: genome file system (attached)
+
+---
+
+feat: use same icons we see in vscode
+i use this extension: material design icons 
+we need exactly the same icons as in vscode
+
+---
+
+fix: do not directly show the file propery/stat info view on right side just on clicking/focusing on the file
+- add a properies option in context menu at the end of the context menu list
+- on clicking that option show the properies view but not in side panel but in a model
+
+---
+
+feat: make entire file system completely keyboard navigatable
+
+---
+
+- in search we should be able to use keyboard to navigation across file and folder: 
+  - by default search input should be focused on search
+  - on pressing down arrow we file system first file should be focused
+  - and then we can navigate using keyboard across the file system
+  - on pressing esc search should be cleared (currently working)
+  - on pressing any other key again serch query will be changed 
+
+---
+- on chaing directory fileter should get re
+
+
+---
+
+feat: file viewer ui
+list of files formats to be supported:
+  - image (all image formats which browser can handle)
+  - video 
+  - audio
+  - pdf
+  - text (all other formats)
+- on double clicking a file if file format is supported we should open it in a new tab
+  if not supported in browser then we should show a dialog to user to download it
+
+---
+
+
+
+
+
+
+
+
+
+
+
+

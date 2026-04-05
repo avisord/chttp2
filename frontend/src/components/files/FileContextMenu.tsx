@@ -5,7 +5,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { FolderOpen, Download, Pencil, Copy, Move, Trash2, Info, FolderPlus, Upload, RefreshCw } from 'lucide-react'
+import { FolderOpen, Download, Pencil, Copy, Trash2, Info, FolderPlus, Upload, RefreshCw } from 'lucide-react'
 import type { FileEntry } from '@/types/api'
 
 interface FileContextMenuProps {
@@ -15,7 +15,6 @@ interface FileContextMenuProps {
   onDownload?: () => void
   onRename?: () => void
   onCopy?: () => void
-  onMove?: () => void
   onDelete?: () => void
   onInfo?: () => void
   onNewFolder?: () => void
@@ -30,7 +29,6 @@ export default function FileContextMenu({
   onDownload,
   onRename,
   onCopy,
-  onMove,
   onDelete,
   onInfo,
   onNewFolder,
@@ -64,7 +62,7 @@ export default function FileContextMenu({
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={onInfo}>
-              <Info className="mr-2 h-4 w-4" /> Get Info
+              <Info className="mr-2 h-4 w-4" /> Properties
             </ContextMenuItem>
           </>
         ) : (
