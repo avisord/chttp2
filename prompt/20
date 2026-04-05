@@ -17,4 +17,9 @@ then redesign the current frontend ui and to meet those standards in frontend de
 
 --- 
 
+feat: search in frontend
+when user is in any directory and presses any key (A-Z, a-z, 0-9, symbols):
+automatically trigger search and these charaters will be entered in serach bar and show filter/searched results
+- on escape (pressing esc) search will be cleared and navigates back to the same directory
 
+---

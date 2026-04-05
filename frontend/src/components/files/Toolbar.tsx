@@ -1,6 +1,7 @@
-import { useRef } from 'react'
-import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download } from 'lucide-react'
+import { useRef, type RefObject } from 'react'
+import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,17 +16,50 @@ interface ToolbarProps {
   onUpload: (files: FileList) => void
   onBulkDelete: () => void
   onBulkDownload: () => void
+  searchQuery: string
+  onSearchChange: (value: string) => void
+  searchInputRef: RefObject<HTMLInputElement | null>
 }
 
-export default function Toolbar({ onNewFolder, onUpload, onBulkDelete, onBulkDownload }: ToolbarProps) {
+export default function Toolbar({
+  onNewFolder,
+  onUpload,
+  onBulkDelete,
+  onBulkDownload,
+  searchQuery,
+  onSearchChange,
+  searchInputRef,
+}: ToolbarProps) {
   const dispatch = useAppDispatch()
   const { viewMode, sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hasSelection = selectedPaths.length > 0
 
   return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-1.5">
+    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-1 flex-wrap items-center gap-2">
+        <div className="relative min-w-[220px] flex-1 lg:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search in this folder"
+            className="h-9 border-slate-200 bg-slate-50 pl-9 pr-9 text-sm focus-visible:bg-white"
+            aria-label="Search files in current folder"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => onSearchChange('')}
+              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-200 hover:text-slate-600"
+              aria-label="Clear search"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
         {hasSelection ? (
           <>
             <span className="mr-1 text-sm font-medium text-slate-500">
@@ -64,7 +98,7 @@ export default function Toolbar({ onNewFolder, onUpload, onBulkDelete, onBulkDow
         )}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center justify-end gap-1">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="text-slate-500 hover:bg-slate-100 hover:text-slate-700">

@@ -53,7 +53,10 @@ export default function FileBrowser() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTargets, setDeleteTargets] = useState<string[]>([])
   const [dragging, setDragging] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOriginPath, setSearchOriginPath] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const lastClickedRef = useRef<string | null>(null)
 
   // Sync path from URL on mount
@@ -81,6 +84,12 @@ export default function FileBrowser() {
     [currentPath],
   )
 
+  const filteredEntries = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return sortedEntries
+    return sortedEntries.filter((entry) => entry.name.toLowerCase().includes(query))
+  }, [searchQuery, sortedEntries])
+
   const navigateTo = useCallback(
     (path: string) => {
       dispatch(setCurrentPath(path))
@@ -90,12 +99,46 @@ export default function FileBrowser() {
     [dispatch, setSearchParams],
   )
 
+  const updateSearchQuery = useCallback(
+    (value: string) => {
+      if (value && !searchQuery) setSearchOriginPath(currentPath)
+      if (!value) setSearchOriginPath(null)
+      setSearchQuery(value)
+    },
+    [currentPath, searchQuery],
+  )
+
+  const startSearch = useCallback(
+    (value: string) => {
+      if (!value) return
+      if (!searchQuery) setSearchOriginPath(currentPath)
+      setSearchQuery((prev) => `${prev}${value}`)
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus()
+        searchInputRef.current?.setSelectionRange(searchInputRef.current.value.length, searchInputRef.current.value.length)
+      })
+    },
+    [currentPath, searchQuery],
+  )
+
+  const clearSearch = useCallback(
+    (restoreOriginPath = false) => {
+      const originPath = searchOriginPath
+      setSearchQuery('')
+      setSearchOriginPath(null)
+      if (restoreOriginPath && originPath && originPath !== currentPath) {
+        navigateTo(originPath)
+      }
+    },
+    [currentPath, navigateTo, searchOriginPath],
+  )
+
   const handleItemClick = useCallback(
     (entry: FileEntry, e: React.MouseEvent) => {
       if (e.ctrlKey || e.metaKey) {
         dispatch(toggleSelect(entry.name))
       } else if (e.shiftKey && lastClickedRef.current) {
-        const names = sortedEntries.map((e) => e.name)
+        const names = filteredEntries.map((e) => e.name)
         const start = names.indexOf(lastClickedRef.current)
         const end = names.indexOf(entry.name)
         const range = names.slice(Math.min(start, end), Math.max(start, end) + 1)
@@ -106,7 +149,7 @@ export default function FileBrowser() {
       }
       lastClickedRef.current = entry.name
     },
-    [dispatch, sortedEntries],
+    [dispatch, filteredEntries],
   )
 
   const handleItemDoubleClick = useCallback(
@@ -184,7 +227,29 @@ export default function FileBrowser() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const target = e.target
+      const isEditableTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+
+      if (e.key === 'Escape' && searchQuery) {
+        e.preventDefault()
+        clearSearch(true)
+        searchInputRef.current?.blur()
+        dispatch(clearSelection())
+        dispatch(setPreviewFile(null))
+        return
+      }
+
+      if (isEditableTarget) return
+
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+        e.preventDefault()
+        startSearch(e.key)
+        return
+      }
 
       if (e.key === 'Delete' && selectedPaths.length) {
         e.preventDefault()
@@ -198,7 +263,7 @@ export default function FileBrowser() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault()
-        dispatch(setSelectedPaths(sortedEntries.map((e) => e.name)))
+        dispatch(setSelectedPaths(filteredEntries.map((e) => e.name)))
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedPaths.length) {
         e.preventDefault()
@@ -226,7 +291,19 @@ export default function FileBrowser() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedPaths, sortedEntries, clipboard, currentPath, dispatch, resolvePath, navigateTo, handlePaste])
+  }, [
+    selectedPaths,
+    filteredEntries,
+    clipboard,
+    currentPath,
+    dispatch,
+    resolvePath,
+    navigateTo,
+    handlePaste,
+    searchQuery,
+    startSearch,
+    clearSearch,
+  ])
 
   // Drag and drop
   const handleDragOver = (e: React.DragEvent) => {
@@ -280,6 +357,9 @@ export default function FileBrowser() {
               if (entry?.type === 'file') downloadFile(resolvePath(name), name)
             })
           }}
+          searchQuery={searchQuery}
+          onSearchChange={updateSearchQuery}
+          searchInputRef={searchInputRef}
         />
       </div>
 
@@ -296,13 +376,17 @@ export default function FileBrowser() {
                 <Skeleton key={i} className="h-32 rounded-xl" />
               ))}
             </div>
-          ) : sortedEntries.length === 0 ? (
+          ) : filteredEntries.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-slate-400">
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-xl bg-slate-100">
                 <FolderOpen className="h-8 w-8 text-slate-300" />
               </div>
-              <p className="text-sm font-semibold text-slate-500">This folder is empty</p>
-              <p className="mt-1 text-xs text-slate-400">Drop files here or click Upload to get started</p>
+              <p className="text-sm font-semibold text-slate-500">
+                {searchQuery ? 'No matches found' : 'This folder is empty'}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {searchQuery ? `No files or folders match "${searchQuery}"` : 'Drop files here or click Upload to get started'}
+              </p>
             </div>
           ) : (
             <FileContextMenu
@@ -313,7 +397,7 @@ export default function FileBrowser() {
               <div>
                 {viewMode === 'grid' ? (
                   <FileGrid
-                    entries={sortedEntries}
+                    entries={filteredEntries}
                     selectedPaths={selectedPaths}
                     onItemClick={handleItemClick}
                     onItemDoubleClick={handleItemDoubleClick}
@@ -324,7 +408,7 @@ export default function FileBrowser() {
                   />
                 ) : (
                   <FileList
-                    entries={sortedEntries}
+                    entries={filteredEntries}
                     selectedPaths={selectedPaths}
                     onItemClick={handleItemClick}
                     onItemDoubleClick={handleItemDoubleClick}
