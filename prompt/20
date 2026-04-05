@@ -110,6 +110,14 @@ information should be placed in server in ~/.imaginary/places
 --- 
 
 current issues:
+
+- build and deploy frontend directly using chttp static server
+
 - previews 
 - large uploads
 - address bar not visbile and clickable issue
+- trash implementation
+
+- fix branding move project to main project
+- setup deployment and install script
+- frontend and ui design
