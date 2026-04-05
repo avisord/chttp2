@@ -48,7 +48,7 @@ export default function DiskCard({ disk, onMount, onUnmount }: DiskCardProps) {
           </div>
         </div>
         <div className="flex gap-1">
-          {disk.type === 'part' && (
+          {(disk.type === 'part' || (disk.type === 'disk' && disk.fstype && !disk.children?.length)) && (
             isMounted ? (
               <Button
                 variant="ghost"

@@ -30,6 +30,7 @@ export function getFileViewType(name: string, mime: string): FileViewType {
 }
 
 export function getDownloadUrl(path: string, inline = false): string {
-  const url = `/fs/download?path=${encodeURIComponent(path)}`
+  const base = import.meta.env.VITE_API_URL || ''
+  const url = `${base}/fs/download?path=${encodeURIComponent(path)}`
   return inline ? `${url}&inline=1` : url
 }

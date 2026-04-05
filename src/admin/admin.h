@@ -11,3 +11,4 @@ void handle_admin_delete_user_impl(HttpRequest *req, HttpResponse *res);
 void handle_admin_list_disks_impl(HttpRequest *req, HttpResponse *res);
 void handle_admin_mount_impl(HttpRequest *req, HttpResponse *res);
 void handle_admin_unmount_impl(HttpRequest *req, HttpResponse *res);
+void handle_admin_format_impl(HttpRequest *req, HttpResponse *res);

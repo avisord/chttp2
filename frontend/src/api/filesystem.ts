@@ -1,4 +1,4 @@
-import { apiRequest, apiRequestRaw } from './client'
+import { apiRequest, apiRequestRaw, API_URL } from './client'
 import type { DirListResponse, FileStat, FileContentResponse } from '@/types/api'
 
 export function listDir(path: string) {
@@ -67,7 +67,7 @@ export function writeContent(path: string, content: string) {
 export function simpleUpload(dirPath: string, file: File, onProgress?: (pct: number) => void): Promise<{ message: string; path: string; size: number }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', `/fs/upload?path=${encodeURIComponent(dirPath)}`)
+    xhr.open('POST', `${API_URL}/fs/upload?path=${encodeURIComponent(dirPath)}`)
     xhr.withCredentials = true
 
     if (onProgress) {
@@ -92,5 +92,5 @@ export function simpleUpload(dirPath: string, file: File, onProgress?: (pct: num
 }
 
 export function downloadFile(path: string) {
-  window.location.href = `/fs/download?path=${encodeURIComponent(path)}`
+  window.location.href = `${API_URL}/fs/download?path=${encodeURIComponent(path)}`
 }

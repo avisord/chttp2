@@ -44,6 +44,7 @@ DEFINE_AUTH_ROUTE(handle_admin_delete_user, handle_admin_delete_user_impl)
 DEFINE_AUTH_ROUTE(handle_admin_list_disks,  handle_admin_list_disks_impl)
 DEFINE_AUTH_ROUTE(handle_admin_mount,       handle_admin_mount_impl)
 DEFINE_AUTH_ROUTE(handle_admin_unmount,     handle_admin_unmount_impl)
+DEFINE_AUTH_ROUTE(handle_admin_format,      handle_admin_format_impl)
 
 int main(void) {
   if (getuid() != 0) {
@@ -110,6 +111,7 @@ int main(void) {
   CHTTP_GET(&srv,    "/admin/disks",            handle_admin_list_disks);
   CHTTP_POST(&srv,   "/admin/disks/mount",      handle_admin_mount);
   CHTTP_POST(&srv,   "/admin/disks/unmount",    handle_admin_unmount);
+  CHTTP_POST(&srv,   "/admin/disks/format",     handle_admin_format);
 
   /* Static file server — public, no auth */
   CHTTP_STREAM_GET(&srv, "/static/*", handle_static);

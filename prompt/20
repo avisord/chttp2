@@ -88,7 +88,12 @@ need active root session to manage user and disk
 - add disk management (add, read, delete, edit) options
 
 
+---
 
+feat: allow different paths (fronted change)
+- / root
+- /home/<user> home
+- /home/<user>/.imaginary/trash trash
 
 
 

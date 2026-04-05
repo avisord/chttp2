@@ -1,3 +1,5 @@
+export const API_URL = import.meta.env.VITE_API_URL || ''
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -12,7 +14,7 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     ...options,
     headers: {
@@ -38,7 +40,7 @@ export async function apiRequestRaw(
   path: string,
   options: RequestInit = {},
 ): Promise<Response> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     ...options,
   })

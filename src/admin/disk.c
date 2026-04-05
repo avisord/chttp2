@@ -170,3 +170,47 @@ void handle_admin_unmount_impl(HttpRequest *req, HttpResponse *res) {
   }
   cJSON_Delete(body);
 }
+
+/* POST /admin/disks/format — { device, fstype } */
+void handle_admin_format_impl(HttpRequest *req, HttpResponse *res) {
+  ROOT_GUARD(res);
+
+  cJSON *body = cJSON_ParseWithLength(req->body, req->body_len);
+  if (!body) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid JSON\"}");
+    return;
+  }
+
+  const char *device = cJSON_GetStringValue(cJSON_GetObjectItem(body, "device"));
+  const char *fstype = cJSON_GetStringValue(cJSON_GetObjectItem(body, "fstype"));
+
+  if (!device || !valid_path(device)) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Invalid device path\"}");
+    cJSON_Delete(body);
+    return;
+  }
+  if (!fstype || !*fstype) {
+    chttp_set_status(res, 400);
+    chttp_send_json(res, "{\"error\":\"Filesystem type required\"}");
+    cJSON_Delete(body);
+    return;
+  }
+
+  /* Build mkfs.<fstype> command */
+  char cmd[64];
+  snprintf(cmd, sizeof(cmd), "mkfs.%s", fstype);
+
+  char *argv[] = {cmd, (char *)device, NULL};
+  int rc = run_command(argv);
+
+  if (rc != 0) {
+    chttp_set_status(res, 500);
+    chttp_send_json(res, "{\"error\":\"Format failed\"}");
+  } else {
+    chttp_set_status(res, 200);
+    chttp_send_json(res, "{\"message\":\"Formatted successfully\"}");
+  }
+  cJSON_Delete(body);
+}
