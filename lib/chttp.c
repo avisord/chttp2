@@ -11,6 +11,17 @@
 #include <string.h>
 #include <unistd.h>
 
+/* ---- CORS origin ---- */
+
+static const char *cors_origin(void) {
+    static const char *origin;
+    if (!origin) {
+        origin = getenv("CHTTP_CORS_ORIGIN");
+        if (!origin) origin = "http://localhost:5173";
+    }
+    return origin;
+}
+
 /* ---- URL decode (ported from rpmi_server.c) ---- */
 
 static char from_hex(char c) {
@@ -652,12 +663,13 @@ int chttp_write_response(int fd, HttpResponse *res) {
         n += snprintf(hbuf + n, sizeof(hbuf) - n,
                       "%s: %s\r\n", res->headers[i].key, res->headers[i].value);
 
-    /* CORS — allow all origins while UI is on a different origin */
+    /* CORS */
     n += snprintf(hbuf + n, sizeof(hbuf) - n,
-                  "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+                  "Access-Control-Allow-Origin: %s\r\n"
                   "Access-Control-Allow-Credentials: true\r\n"
                   "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
-                  "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n");
+                  "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n",
+                  cors_origin());
 
     n += snprintf(hbuf + n, sizeof(hbuf) - n,
                   "Content-Length: %zu\r\n\r\n", res->body_len);
@@ -703,15 +715,17 @@ static void *connection_thread(void *arg) {
 
     /* Handle CORS preflight before routing — no handler needed */
     if (strcmp(req.method, "OPTIONS") == 0) {
-        const char *pre =
+        char pre[1024];
+        int pn = snprintf(pre, sizeof(pre),
             "HTTP/1.1 204 No Content\r\n"
-            "Access-Control-Allow-Origin: http://localhost:8081\r\n"
+            "Access-Control-Allow-Origin: %s\r\n"
             "Access-Control-Allow-Credentials: true\r\n"
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, PATCH, OPTIONS\r\n"
             "Access-Control-Allow-Headers: Content-Type, Cookie, X-Chunk-Index\r\n"
             "Access-Control-Max-Age: 86400\r\n"
-            "Content-Length: 0\r\n\r\n";
-        write(fd, pre, strlen(pre));
+            "Content-Length: 0\r\n\r\n",
+            cors_origin());
+        write(fd, pre, pn);
         close(fd);
         return NULL;
     }
