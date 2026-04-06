@@ -16,6 +16,7 @@ export default function TopBar() {
   const dispatch = useAppDispatch()
   const navigate = useNavigate()
   const user = useAppSelector((s) => s.auth.user)
+  const isRoot = user?.uid === 0
 
   const handleLogout = async () => {
     await dispatch(logoutThunk())
@@ -36,11 +37,12 @@ export default function TopBar() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="flex items-center gap-2 px-2 hover:bg-slate-50">
               <Avatar className="h-7 w-7">
-                <AvatarFallback className="bg-indigo-50 text-xs font-semibold text-indigo-600">
+                <AvatarFallback className={isRoot ? 'bg-red-100 text-xs font-semibold text-red-600' : 'bg-indigo-50 text-xs font-semibold text-indigo-600'}>
                   {user?.username?.charAt(0).toUpperCase() || '?'}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-sm font-medium text-slate-700">{user?.username || 'User'}</span>
+              <span className={isRoot ? 'text-sm font-semibold text-red-600' : 'text-sm font-medium text-slate-700'}>{user?.username || 'User'}</span>
+              {isRoot && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-600">root</span>}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">

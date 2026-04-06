@@ -3,6 +3,7 @@ import SessionList from '@/components/sessions/SessionList'
 
 export default function SettingsPage() {
   const user = useAppSelector((s) => s.auth.user)
+  const isRoot = user?.uid === 0
 
   return (
     <div className="mx-auto max-w-2xl space-y-8 px-4 py-8 sm:px-6">
@@ -27,7 +28,15 @@ export default function SettingsPage() {
               ).map(([label, value]) => (
                 <div key={label} className="flex items-baseline justify-between border-b border-slate-100 py-3 last:border-0">
                   <span className="text-sm font-medium text-slate-500">{label}</span>
-                  <span className="font-mono text-sm text-slate-900">{String(value)}</span>
+                  <span className="font-mono text-sm text-slate-900">
+                    {String(value)}
+                    {label === 'Username' && isRoot && (
+                      <span className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 align-middle font-sans text-[10px] font-bold uppercase text-red-600">root</span>
+                    )}
+                    {label === 'UID' && isRoot && (
+                      <span className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 align-middle font-sans text-[10px] font-bold text-red-600">superuser</span>
+                    )}
+                  </span>
                 </div>
               ))}
             </div>

@@ -87,8 +87,8 @@ export default function Sidebar() {
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer',
                 )}
               >
-                <UserCircle className="h-4 w-4 shrink-0" />
-                <span className="truncate">{session.username}</span>
+                <UserCircle className={cn('h-4 w-4 shrink-0', session.username === 'root' && 'text-red-500')} />
+                <span className={cn('truncate', session.username === 'root' && 'font-semibold text-red-600')}>{session.username}</span>
                 {isActive && (
                   <span className="ml-auto text-[10px] font-semibold uppercase text-indigo-400">
                     active
