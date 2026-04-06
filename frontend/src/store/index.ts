@@ -6,6 +6,7 @@ import uploadsReducer from './slices/uploadsSlice'
 import usersReducer from './slices/usersSlice'
 import disksReducer from './slices/disksSlice'
 import bookmarksReducer from './slices/bookmarksSlice'
+import settingsReducer from './slices/settingsSlice'
 
 export const store = configureStore({
   reducer: {
@@ -16,6 +17,7 @@ export const store = configureStore({
     users: usersReducer,
     disks: disksReducer,
     bookmarks: bookmarksReducer,
+    settings: settingsReducer,
   },
 })
 

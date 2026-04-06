@@ -9,7 +9,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { setViewMode, setIconSize, setSortBy } from '@/store/slices/fileSystemSlice'
+import { setSortBy } from '@/store/slices/fileSystemSlice'
+import { setViewMode, setIconSize } from '@/store/slices/settingsSlice'
 
 interface ToolbarProps {
   onNewFolder: () => void
@@ -33,7 +34,8 @@ export default function Toolbar({
   searchInputRef,
 }: ToolbarProps) {
   const dispatch = useAppDispatch()
-  const { viewMode, iconSize, sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
+  const { sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
+  const { viewMode, iconSize } = useAppSelector((s) => s.settings.values)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hasSelection = selectedPaths.length > 0
 

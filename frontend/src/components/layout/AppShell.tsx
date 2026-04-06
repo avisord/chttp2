@@ -1,13 +1,20 @@
+import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { ShieldAlert } from 'lucide-react'
 import TopBar from './TopBar'
 import Sidebar from './Sidebar'
 import UploadManager from '@/components/uploads/UploadManager'
-import { useAppSelector } from '@/store/hooks'
+import { useAppSelector, useAppDispatch } from '@/store/hooks'
+import { fetchSettingsThunk } from '@/store/slices/settingsSlice'
 
 export default function AppShell() {
+  const dispatch = useAppDispatch()
   const user = useAppSelector((s) => s.auth.user)
   const isRoot = user?.uid === 0
+
+  useEffect(() => {
+    dispatch(fetchSettingsThunk())
+  }, [dispatch])
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">

@@ -42,13 +42,12 @@ export default function FileBrowser() {
     currentPath,
     entries,
     status,
-    viewMode,
-    iconSize,
     sortBy,
     sortOrder,
     selectedPaths,
     clipboard,
   } = useAppSelector((s) => s.fileSystem)
+  const { viewMode, iconSize } = useAppSelector((s) => s.settings.values)
 
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)

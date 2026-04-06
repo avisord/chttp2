@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { fetchSessionsThunk, switchSessionThunk } from '@/store/slices/sessionsSlice'
 import { fetchBookmarksThunk } from '@/store/slices/bookmarksSlice'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
+import { fetchSettingsThunk } from '@/store/slices/settingsSlice'
 import PlacesPanel from '@/components/files/PlacesPanel'
 
 const adminItems = [
@@ -49,6 +50,7 @@ export default function Sidebar() {
     try {
       await dispatch(switchSessionThunk(sessionId)).unwrap()
       dispatch(fetchBookmarksThunk())
+      dispatch(fetchSettingsThunk())
       dispatch(setCurrentPath('.'))
       dispatch(listDirThunk('.'))
       navigate('/')
