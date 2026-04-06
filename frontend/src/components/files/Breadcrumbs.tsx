@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Home, ChevronRight, CornerDownLeft, X, EllipsisVertical } from 'lucide-react'
+import { Home, ChevronRight } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
 import { useSearchParams } from 'react-router-dom'
@@ -13,7 +13,7 @@ export default function Breadcrumbs() {
   const [editing, setEditing] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const previousFocusRef = useRef<Element | null>(null)
+  const isRoot = user?.uid === 0
 
   const segments = currentPath === '.' ? [] : currentPath.split('/').filter(Boolean)
 
@@ -32,7 +32,6 @@ export default function Breadcrumbs() {
       const home = user?.home || '/home'
       if (absPath === home || absPath === home + '/') return '.'
       if (absPath.startsWith(home + '/')) return absPath.slice(home.length + 1)
-      // Absolute path outside home — prefix with /
       return absPath
     },
     [user?.home],
@@ -48,21 +47,13 @@ export default function Breadcrumbs() {
   )
 
   const startEditing = useCallback(() => {
-    previousFocusRef.current = document.activeElement
     setInputValue(toAbsolute(currentPath))
     setEditing(true)
   }, [currentPath, toAbsolute])
 
-  const stopEditing = useCallback(
-    (restoreFocus = true) => {
-      setEditing(false)
-      if (restoreFocus && previousFocusRef.current instanceof HTMLElement) {
-        previousFocusRef.current.focus()
-      }
-      previousFocusRef.current = null
-    },
-    [],
-  )
+  const stopEditing = useCallback(() => {
+    setEditing(false)
+  }, [])
 
   const submitPath = useCallback(() => {
     const trimmed = inputValue.trim().replace(/\/+$/, '')
@@ -72,7 +63,7 @@ export default function Breadcrumbs() {
     }
     const rel = trimmed.startsWith('/') ? toRelative(trimmed) : trimmed
     navigateTo(rel)
-    stopEditing(false)
+    stopEditing()
   }, [inputValue, navigateTo, stopEditing, toRelative])
 
   // Focus input when entering edit mode
@@ -95,14 +86,19 @@ export default function Breadcrumbs() {
     return () => window.removeEventListener('keydown', handler)
   }, [startEditing])
 
+  const barHighlight = isRoot
+    ? 'border-red-200 bg-red-50/50'
+    : 'border-slate-200 bg-slate-50/50'
+
   if (editing) {
     return (
-      <div className="flex w-full items-center gap-1">
+      <div className={`flex w-full items-center rounded-lg border px-1 ${barHighlight}`}>
         <input
           ref={inputRef}
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
+          onBlur={stopEditing}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -112,31 +108,23 @@ export default function Breadcrumbs() {
               stopEditing()
             }
           }}
-          className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+          className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none"
         />
-        <button
-          onClick={submitPath}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-          title="Go"
-        >
-          <CornerDownLeft className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => stopEditing()}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-          title="Cancel (Esc)"
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
     )
   }
 
   return (
-    <div className="flex w-full items-center">
+    <div
+      className={`flex w-full cursor-text items-center rounded-lg border px-1 transition-colors hover:border-indigo-300 ${barHighlight}`}
+      onClick={startEditing}
+    >
       <nav className="flex min-w-0 flex-1 items-center gap-1 text-sm">
         <button
-          onClick={() => navigateTo('.')}
+          onClick={(e) => {
+            e.stopPropagation()
+            navigateTo('.')
+          }}
           className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
         >
           <Home className="h-4 w-4" />
@@ -148,7 +136,10 @@ export default function Breadcrumbs() {
             <span key={path} className="flex items-center gap-1">
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
               <button
-                onClick={() => navigateTo(path)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  navigateTo(path)
+                }}
                 className={`truncate rounded-md px-2 py-1 transition-colors ${
                   isLast
                     ? 'font-semibold text-slate-900'
@@ -161,13 +152,6 @@ export default function Breadcrumbs() {
           )
         })}
       </nav>
-      <button
-        onClick={startEditing}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-        title="Edit location (Alt+L)"
-      >
-        <EllipsisVertical className="h-4 w-4" />
-      </button>
     </div>
   )
 }
