@@ -115,9 +115,40 @@ current issues:
 
 - previews 
 - large uploads
-- address bar not visbile and clickable issue
+- address bar not visbile and clickable issue -- done
 - trash implementation
 
 - fix branding move project to main project
 - setup deployment and install script
-- frontend and ui design
+- emphesise more if user's logged in as root (uid 0) -- done
+  - by adding some stylting which shows the root user as a different color
+
+features:
+- frontend and ui design using extendable prompts
+- mcp for file system management
+- local folder sync for file system
+- log viewer
+- ternimal support
+
+
+
+---
+
+
+feat: support for large file uploads
+currenttly we are using: http://localhost:8080/fs/upload?path=.
+which only supports small file uploads (upto )
+
+add confirmation before delting user, updating user, mounting , formatting , unmounting disks
+
+---
+
+feat: persist settings in user file system
+settings which needs to be synced: 
+  - zoom level
+  - view mode (grid, list)
+- use read and write fs api to read and write to user file system
+- config dir is in: <user home>/.imaginary/config
+- respect other configs in same file
+
+
