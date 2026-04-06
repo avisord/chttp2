@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import { fetchDisksThunk, mountDiskThunk, unmountDiskThunk, formatDiskThunk } fr
 import DiskCard from './DiskCard'
 import MountDialog from './MountDialog'
 import FormatDialog from './FormatDialog'
+import ConfirmDialog from './ConfirmDialog'
 
 export default function DiskList() {
   const dispatch = useAppDispatch()
@@ -16,6 +17,12 @@ export default function DiskList() {
   const [mountDevice, setMountDevice] = useState('')
   const [formatDialogOpen, setFormatDialogOpen] = useState(false)
   const [formatDevice, setFormatDevice] = useState('')
+  const [unmountConfirmOpen, setUnmountConfirmOpen] = useState(false)
+  const [unmountTarget, setUnmountTarget] = useState('')
+  const [mountConfirmOpen, setMountConfirmOpen] = useState(false)
+  const pendingMountData = useRef<{ device: string; mountpoint: string; fstype?: string } | null>(null)
+  const [formatConfirmOpen, setFormatConfirmOpen] = useState(false)
+  const pendingFormatData = useRef<{ device: string; fstype: string } | null>(null)
 
   useEffect(() => {
     dispatch(fetchDisksThunk())
@@ -26,19 +33,33 @@ export default function DiskList() {
     setMountDialogOpen(true)
   }
 
-  const handleMountSubmit = async (data: { device: string; mountpoint: string; fstype?: string }) => {
+  const handleMountSubmit = (data: { device: string; mountpoint: string; fstype?: string }) => {
+    pendingMountData.current = data
+    setMountConfirmOpen(true)
+  }
+
+  const confirmMount = async () => {
+    if (!pendingMountData.current) return
+    const data = pendingMountData.current
     try {
       await dispatch(mountDiskThunk(data)).unwrap()
       toast.success(`Mounted ${data.device} at ${data.mountpoint}`)
     } catch {
       toast.error('Failed to mount device')
     }
+    pendingMountData.current = null
   }
 
-  const handleUnmount = async (mountpoint: string) => {
+  const handleUnmount = (mountpoint: string) => {
+    setUnmountTarget(mountpoint)
+    setUnmountConfirmOpen(true)
+  }
+
+  const confirmUnmount = async () => {
+    if (!unmountTarget) return
     try {
-      await dispatch(unmountDiskThunk({ mountpoint })).unwrap()
-      toast.success(`Unmounted ${mountpoint}`)
+      await dispatch(unmountDiskThunk({ mountpoint: unmountTarget })).unwrap()
+      toast.success(`Unmounted ${unmountTarget}`)
     } catch {
       toast.error('Failed to unmount device')
     }
@@ -49,13 +70,21 @@ export default function DiskList() {
     setFormatDialogOpen(true)
   }
 
-  const handleFormatSubmit = async (data: { device: string; fstype: string }) => {
+  const handleFormatSubmit = (data: { device: string; fstype: string }) => {
+    pendingFormatData.current = data
+    setFormatConfirmOpen(true)
+  }
+
+  const confirmFormat = async () => {
+    if (!pendingFormatData.current) return
+    const data = pendingFormatData.current
     try {
       await dispatch(formatDiskThunk(data)).unwrap()
       toast.success(`Formatted ${data.device} as ${data.fstype}`)
     } catch {
       toast.error('Failed to format device')
     }
+    pendingFormatData.current = null
   }
 
   if (status === 'loading' && !disks.length) {
@@ -102,6 +131,35 @@ export default function DiskList() {
         onOpenChange={setFormatDialogOpen}
         device={formatDevice}
         onSubmit={handleFormatSubmit}
+      />
+
+      <ConfirmDialog
+        open={unmountConfirmOpen}
+        onOpenChange={setUnmountConfirmOpen}
+        title={`Unmount ${unmountTarget}?`}
+        description="Any processes using this mountpoint may be interrupted. Make sure no files are open on this device before unmounting."
+        confirmLabel="Unmount"
+        destructive
+        onConfirm={confirmUnmount}
+      />
+
+      <ConfirmDialog
+        open={mountConfirmOpen}
+        onOpenChange={setMountConfirmOpen}
+        title={`Mount ${pendingMountData.current?.device ?? ''}?`}
+        description={`This will mount the device at ${pendingMountData.current?.mountpoint ?? ''}. Ensure the mount point exists and is empty.`}
+        confirmLabel="Mount"
+        onConfirm={confirmMount}
+      />
+
+      <ConfirmDialog
+        open={formatConfirmOpen}
+        onOpenChange={setFormatConfirmOpen}
+        title={`Format ${pendingFormatData.current?.device ?? ''}?`}
+        description={`This will ERASE ALL DATA on ${pendingFormatData.current?.device ?? ''} and create a new ${pendingFormatData.current?.fstype ?? ''} filesystem. This action cannot be undone.`}
+        confirmLabel="Format"
+        destructive
+        onConfirm={confirmFormat}
       />
     </div>
   )
