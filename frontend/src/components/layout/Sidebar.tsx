@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { FolderOpen, Settings, HardDrive, Users, UserCircle } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { FolderOpen, Settings, HardDrive, Users, UserCircle, Moon, Sun } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -24,8 +25,8 @@ function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ComponentT
         cn(
           'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
           isActive
-            ? 'bg-indigo-50 text-indigo-600 shadow-[0_1px_3px_rgba(79,70,229,0.1)]'
-            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
+            ? 'bg-indigo-50 text-indigo-600 shadow-[0_1px_3px_rgba(79,70,229,0.1)] dark:bg-indigo-950 dark:text-indigo-400'
+            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200',
         )
       }
     >
@@ -41,6 +42,7 @@ export default function Sidebar() {
   const user = useAppSelector((s) => s.auth.user)
   const { sessions } = useAppSelector((s) => s.sessions)
   const isRoot = user?.uid === 0 && user?.gid === 0
+  const { theme, setTheme } = useTheme()
 
   useEffect(() => {
     dispatch(fetchSessionsThunk())
@@ -61,7 +63,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-slate-200 bg-white">
+    <aside className="flex w-56 flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <nav className="flex flex-1 flex-col gap-1 overflow-auto p-3 pt-4">
         <NavItem to="/" icon={FolderOpen} label="Files" />
 
@@ -115,11 +117,20 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* Storage indicator */}
-      <div className="border-t border-slate-100 p-4">
-        <div className="flex items-center gap-2 text-xs text-slate-400">
-          <HardDrive className="h-3.5 w-3.5" />
-          <span>NAS Storage</span>
+      {/* Footer — theme toggle & storage */}
+      <div className="border-t border-slate-100 p-4 dark:border-slate-700">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <HardDrive className="h-3.5 w-3.5" />
+            <span>NAS Storage</span>
+          </div>
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
         </div>
       </div>
     </aside>

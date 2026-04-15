@@ -644,11 +644,11 @@ export default function FileBrowser() {
         </div>
       )}
 
-      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3">
+      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900">
         <Breadcrumbs />
       </div>
 
-      <div className="border-b border-slate-100 bg-white px-5 py-2">
+      <div className="border-b border-slate-100 bg-white px-5 py-2 dark:border-slate-700 dark:bg-slate-900">
         <Toolbar
           onNewFolder={() => setNewFolderOpen(true)}
           onUpload={handleUploadFiles}

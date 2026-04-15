@@ -105,6 +105,50 @@
   --sidebar-ring: #4F46E5;
 }
 
+/*
+ * Corporate Trust Design System — Dark Mode
+ */
+.dark {
+  --background: #0F172A;
+  --foreground: #E2E8F0;
+  --card: #1E293B;
+  --card-foreground: #E2E8F0;
+  --popover: #1E293B;
+  --popover-foreground: #E2E8F0;
+  /* Brand */
+  --primary: #818CF8;
+  --primary-foreground: #0F172A;
+  --secondary: #A78BFA;
+  --secondary-foreground: #0F172A;
+  /* Neutral layers */
+  --muted: #1E293B;
+  --muted-foreground: #94A3B8;
+  --accent: #1E293B;
+  --accent-foreground: #E2E8F0;
+  /* Semantic */
+  --destructive: #F87171;
+  /* Edges */
+  --border: #334155;
+  --input: #334155;
+  --ring: #818CF8;
+  /* Charts */
+  --chart-1: #818CF8;
+  --chart-2: #A78BFA;
+  --chart-3: #34D399;
+  --chart-4: #FBBF24;
+  --chart-5: #F472B6;
+  /* Sidebar */
+  --sidebar: #0F172A;
+  --sidebar-background: #0F172A;
+  --sidebar-foreground: #CBD5E1;
+  --sidebar-primary: #818CF8;
+  --sidebar-primary-foreground: #0F172A;
+  --sidebar-accent: #1E293B;
+  --sidebar-accent-foreground: #E2E8F0;
+  --sidebar-border: #334155;
+  --sidebar-ring: #818CF8;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

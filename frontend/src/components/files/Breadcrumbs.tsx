@@ -91,8 +91,8 @@ export default function Breadcrumbs() {
   const isTrash = currentPath === TRASH_PATH
 
   const barHighlight = isRoot
-    ? 'border-red-200 bg-red-50/50'
-    : 'border-slate-200 bg-slate-50/50'
+    ? 'border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/50'
+    : 'border-slate-200 bg-slate-50/50 dark:border-slate-600 dark:bg-slate-800/50'
 
   if (isTrash) {
     return (
