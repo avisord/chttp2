@@ -5,6 +5,7 @@
 #include "admin/admin.h"
 #include "auth/auth.h"
 #include "fs/fs.h"
+#include "fs/trash.h"
 #include "routes/routes.h"
 #include "routes/session_mgmt.h"
 #include "routes/static.h"
@@ -35,6 +36,12 @@ DEFINE_AUTH_ROUTE(handle_fs_upload_session_create, handle_fs_upload_session_crea
 DEFINE_AUTH_ROUTE(handle_fs_upload_session_status, handle_fs_upload_session_status_impl)
 DEFINE_STREAM_AUTH_ROUTE(handle_fs_upload_chunk,   handle_fs_upload_chunk_impl)
 DEFINE_AUTH_ROUTE(handle_fs_upload_session_abort,  handle_fs_upload_session_abort_impl)
+
+/* Trash management */
+DEFINE_AUTH_ROUTE(handle_trash_list,    handle_trash_list_impl)
+DEFINE_AUTH_ROUTE(handle_trash_restore, handle_trash_restore_impl)
+DEFINE_AUTH_ROUTE(handle_trash_delete,  handle_trash_delete_impl)
+DEFINE_AUTH_ROUTE(handle_trash_empty,   handle_trash_empty_impl)
 
 /* Admin management — runs as authenticated user; handlers guard on uid==0 */
 DEFINE_AUTH_ROUTE(handle_admin_list_users,  handle_admin_list_users_impl)
@@ -102,6 +109,12 @@ int main(void) {
   CHTTP_GET(&srv,         "/fs/upload-session/:upload_id",    handle_fs_upload_session_status);
   CHTTP_STREAM_POST(&srv, "/fs/upload-chunk/:upload_id",      handle_fs_upload_chunk);
   CHTTP_DELETE(&srv,      "/fs/upload-session/:upload_id",    handle_fs_upload_session_abort);
+
+  /* Trash management — authenticated */
+  CHTTP_GET(&srv,    "/trash/list",     handle_trash_list);
+  CHTTP_POST(&srv,   "/trash/restore",  handle_trash_restore);
+  CHTTP_DELETE(&srv, "/trash/:name",    handle_trash_delete);
+  CHTTP_DELETE(&srv, "/trash",          handle_trash_empty);
 
   /* Admin management — requires root session */
   CHTTP_GET(&srv,    "/admin/users",            handle_admin_list_users);

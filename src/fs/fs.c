@@ -12,6 +12,7 @@
 
 #include "cJSON.h"
 #include "fs.h"
+#include "trash.h"
 #include "sha256.h"
 #include "utils/utils.h"
 
@@ -166,8 +167,8 @@ void handle_fs_delete_file_impl(HttpRequest *req, HttpResponse *res) {
     chttp_send_json(res, "{\"error\":\"Invalid path\",\"errno\":0}");
     return;
   }
-  if (unlink(path) != 0) { fs_error(res, errno); return; }
-  chttp_send_json(res, "{\"message\":\"deleted\"}");
+  if (trash_item(path) != 0) { fs_error(res, errno); return; }
+  chttp_send_json(res, "{\"message\":\"trashed\"}");
 }
 
 /* POST /fs/mkdir  body: {"path":"docs/new"} */
@@ -228,8 +229,8 @@ void handle_fs_rmdir_impl(HttpRequest *req, HttpResponse *res) {
     chttp_send_json(res, "{\"error\":\"Invalid path\",\"errno\":0}");
     return;
   }
-  if (rmdir(path) != 0) { fs_error(res, errno); return; }
-  chttp_send_json(res, "{\"message\":\"removed\"}");
+  if (trash_item(path) != 0) { fs_error(res, errno); return; }
+  chttp_send_json(res, "{\"message\":\"trashed\"}");
 }
 
 /* POST /fs/rename  body: {"path":"a.txt","name":"b.txt"} */
