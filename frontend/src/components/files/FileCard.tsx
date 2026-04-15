@@ -59,9 +59,9 @@ export default function FileCard({
         sizes.padding,
         sizes.gap,
         selected
-          ? 'bg-indigo-50/70'
-          : 'hover:bg-slate-50/80',
-        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-white',
+          ? 'bg-indigo-50/70 dark:bg-indigo-500/10'
+          : 'hover:bg-slate-50/80 dark:hover:bg-white/5',
+        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-white dark:ring-indigo-500 dark:ring-offset-[#0C0F1A]',
       )}
     >
       <div className={cn(
@@ -75,10 +75,10 @@ export default function FileCard({
           className={iconSizeClass}
         />
       </div>
-      <span className={cn('w-full break-words text-center leading-5 font-medium text-slate-800', sizes.text)}>
+      <span className={cn('w-full break-words text-center leading-5 font-medium text-slate-800 dark:text-slate-200', sizes.text)}>
         {entry.name}
       </span>
-      <span className={cn('text-slate-400', sizes.subtext)}>
+      <span className={cn('text-slate-400 dark:text-slate-500', sizes.subtext)}>
         {entry.type === 'dir' ? 'Folder' : formatSize(entry.size)}
       </span>
     </div>

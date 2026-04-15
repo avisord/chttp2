@@ -102,7 +102,7 @@ export default function PlacesPanel() {
 
       {userBookmarks.length > 0 && (
         <>
-          <div className="mx-3 my-1.5 border-t border-slate-100" />
+          <div className="mx-3 my-1.5 border-t border-slate-100 dark:border-slate-800" />
           <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
             Bookmarks
           </span>

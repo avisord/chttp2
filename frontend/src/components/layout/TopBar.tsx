@@ -24,7 +24,7 @@ export default function TopBar() {
   }
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-5 dark:border-slate-700 dark:bg-slate-900">
+    <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-5 dark:border-[#1E2640] dark:bg-[#0C0F1A]">
       <div className="flex items-center gap-3">
         <h1 className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-lg font-extrabold tracking-tight text-transparent">
           chttp2
@@ -35,13 +35,13 @@ export default function TopBar() {
       <div className="flex items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2 hover:bg-slate-50">
+            <Button variant="ghost" className="flex items-center gap-2 px-2 hover:bg-slate-50 dark:hover:bg-white/5">
               <Avatar className="h-7 w-7">
                 <AvatarFallback className={isRoot ? 'bg-red-100 text-xs font-semibold text-red-600' : 'bg-indigo-50 text-xs font-semibold text-indigo-600'}>
                   {user?.username?.charAt(0).toUpperCase() || '?'}
                 </AvatarFallback>
               </Avatar>
-              <span className={isRoot ? 'text-sm font-semibold text-red-600' : 'text-sm font-medium text-slate-700'}>{user?.username || 'User'}</span>
+              <span className={isRoot ? 'text-sm font-semibold text-red-600' : 'text-sm font-medium text-slate-700 dark:text-slate-300'}>{user?.username || 'User'}</span>
               {isRoot && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-600">root</span>}
             </Button>
           </DropdownMenuTrigger>

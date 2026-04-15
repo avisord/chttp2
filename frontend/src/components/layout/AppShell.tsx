@@ -17,7 +17,7 @@ export default function AppShell() {
   }, [dispatch])
 
   return (
-    <div className="flex h-screen flex-col bg-slate-50 dark:bg-slate-950">
+    <div className="flex h-screen flex-col bg-slate-50 dark:bg-[#0C0F1A]">
       <TopBar />
       {isRoot && (
         <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700">
@@ -29,7 +29,7 @@ export default function AppShell() {
       )}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950">
+        <main className="flex-1 overflow-auto bg-slate-50 dark:bg-[#0C0F1A]">
           <Outlet />
         </main>
       </div>

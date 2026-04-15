@@ -51,17 +51,17 @@ export default function FileRow({
       className={cn(
         'group flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 outline-none transition-all duration-150',
         selected
-          ? 'border-indigo-200 bg-indigo-50/60'
-          : 'hover:bg-slate-50',
-        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-white',
+          ? 'border-indigo-200 bg-indigo-50/60 dark:border-indigo-500/30 dark:bg-indigo-500/10'
+          : 'hover:bg-slate-50 dark:hover:bg-white/5',
+        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-white dark:ring-indigo-500 dark:ring-offset-[#0C0F1A]',
       )}
     >
       <FileIcon name={entry.name} type={entry.type} mime={entry.mime} />
-      <span className="flex-1 truncate text-sm font-medium text-slate-900">{entry.name}</span>
-      <span className="w-20 text-right text-xs text-slate-400">
+      <span className="flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100">{entry.name}</span>
+      <span className="w-20 text-right text-xs text-slate-400 dark:text-slate-500">
         {entry.type === 'dir' ? '-' : formatSize(entry.size)}
       </span>
-      <span className="w-40 text-right text-xs text-slate-400">
+      <span className="w-40 text-right text-xs text-slate-400 dark:text-slate-500">
         {formatDate(entry.modified)}
       </span>
     </div>

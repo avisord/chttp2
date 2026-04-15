@@ -27,20 +27,20 @@ export default function FilePreview() {
   return (
     <Dialog open={previewFile !== null} onOpenChange={(open) => !open && dispatch(setPreviewFile(null))}>
       <DialogContent className="max-w-lg p-0">
-        <DialogHeader className="border-b border-slate-100 px-5 py-4">
-          <DialogTitle className="truncate text-base font-semibold text-slate-900">
+        <DialogHeader className="border-b border-slate-100 px-5 py-4 dark:border-slate-700">
+          <DialogTitle className="truncate text-base font-semibold text-slate-900 dark:text-slate-100">
             Properties
           </DialogTitle>
-          <DialogDescription className="truncate text-sm text-slate-500">
+          <DialogDescription className="truncate text-sm text-slate-500 dark:text-slate-400">
             {previewFile?.name ?? 'Selected item'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 px-5 py-4">
-          <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
             <Info className="h-4 w-4" /> Details
           </h4>
-          <div className="space-y-0 rounded-xl border border-slate-100 bg-slate-50">
+          <div className="space-y-0 rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
             {[
               ['Name', previewFile?.name ?? '-'],
               ['Path', fullPath],
@@ -50,9 +50,9 @@ export default function FilePreview() {
               ['Permissions', fileStat?.mode ?? '-'],
               ['Modified', fileStat ? new Date(fileStat.modified).toLocaleString() : '-'],
             ].map(([k, v]) => (
-              <div key={k} className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-0">
-                <span className="min-w-24 text-sm text-slate-500">{k}</span>
-                <span className="text-right font-mono text-xs break-all text-slate-900">{v}</span>
+              <div key={k} className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-0 dark:border-slate-700">
+                <span className="min-w-24 text-sm text-slate-500 dark:text-slate-400">{k}</span>
+                <span className="text-right font-mono text-xs break-all text-slate-900 dark:text-slate-200">{v}</span>
               </div>
             ))}
           </div>

@@ -26,7 +26,7 @@ export default function FileList({
 }: FileListProps) {
   return (
     <div role="listbox" aria-label="Files" className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-3 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+      <div className="flex items-center gap-3 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         <span className="w-5" />
         <span className="flex-1">Name</span>
         <span className="w-20 text-right">Size</span>

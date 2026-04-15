@@ -107,29 +107,35 @@
 
 /*
  * Corporate Trust Design System — Dark Mode
+ *
+ * Background:  #0C0F1A  (deep navy-black)
+ * Surface:     #161B2E  (raised card)
+ * Primary:     #818CF8  (indigo 400)
+ * Text:        #E2E8F0  (slate 200)
+ * Border:      #1E2640  (subtle, low-contrast)
  */
 .dark {
-  --background: #0F172A;
+  --background: #0C0F1A;
   --foreground: #E2E8F0;
-  --card: #1E293B;
+  --card: #161B2E;
   --card-foreground: #E2E8F0;
-  --popover: #1E293B;
+  --popover: #1A1F35;
   --popover-foreground: #E2E8F0;
   /* Brand */
   --primary: #818CF8;
-  --primary-foreground: #0F172A;
+  --primary-foreground: #0C0F1A;
   --secondary: #A78BFA;
-  --secondary-foreground: #0F172A;
+  --secondary-foreground: #0C0F1A;
   /* Neutral layers */
-  --muted: #1E293B;
-  --muted-foreground: #94A3B8;
-  --accent: #1E293B;
+  --muted: #161B2E;
+  --muted-foreground: #8892B0;
+  --accent: #1A1F35;
   --accent-foreground: #E2E8F0;
   /* Semantic */
   --destructive: #F87171;
   /* Edges */
-  --border: #334155;
-  --input: #334155;
+  --border: #1E2640;
+  --input: #1E2640;
   --ring: #818CF8;
   /* Charts */
   --chart-1: #818CF8;
@@ -138,14 +144,14 @@
   --chart-4: #FBBF24;
   --chart-5: #F472B6;
   /* Sidebar */
-  --sidebar: #0F172A;
-  --sidebar-background: #0F172A;
-  --sidebar-foreground: #CBD5E1;
+  --sidebar: #0C0F1A;
+  --sidebar-background: #0C0F1A;
+  --sidebar-foreground: #8892B0;
   --sidebar-primary: #818CF8;
-  --sidebar-primary-foreground: #0F172A;
-  --sidebar-accent: #1E293B;
+  --sidebar-primary-foreground: #0C0F1A;
+  --sidebar-accent: #161B2E;
   --sidebar-accent-foreground: #E2E8F0;
-  --sidebar-border: #334155;
+  --sidebar-border: #1E2640;
   --sidebar-ring: #818CF8;
 }
 

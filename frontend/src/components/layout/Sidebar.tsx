@@ -67,17 +67,17 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+    <aside className="flex w-56 flex-col border-r border-slate-200 bg-white dark:border-[#1E2640] dark:bg-[#0C0F1A]">
       <nav className="flex flex-1 flex-col gap-1 overflow-auto p-3 pt-4">
         <NavItem to="/" icon={FolderOpen} label="Files" />
 
-        <div className="mx-0 my-1.5 border-t border-slate-100" />
+        <div className="mx-0 my-1.5 border-t border-slate-100 dark:border-slate-800" />
         <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
           Places
         </span>
         <PlacesPanel />
 
-        <div className="mx-0 my-1.5 border-t border-slate-100" />
+        <div className="mx-0 my-1.5 border-t border-slate-100 dark:border-slate-800" />
         <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
           Sessions
         </span>
@@ -91,8 +91,8 @@ export default function Sidebar() {
                 className={cn(
                   'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
                   isActive
-                    ? 'bg-indigo-50 text-indigo-600'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer',
+                    ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 cursor-pointer dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200',
                 )}
               >
                 <UserCircle className={cn('h-4 w-4 shrink-0', session.username === 'root' && 'text-red-500')} />
@@ -107,12 +107,12 @@ export default function Sidebar() {
           })}
         </div>
 
-        <hr className="mx-0 my-1.5 border-slate-200" />
+        <hr className="mx-0 my-1.5 border-slate-200 dark:border-slate-800" />
         <NavItem to="/settings" icon={Settings} label="Settings" />
 
         {isRoot && (
           <>
-            <div className="my-2 border-t border-slate-100" />
+            <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
             <span className="mb-1 px-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Admin</span>
             {adminItems.map((item) => (
               <NavItem key={item.to} {...item} />

@@ -26,7 +26,7 @@ export default function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div>
-        <label htmlFor="username" className="mb-1.5 block text-sm font-semibold text-slate-700">
+        <label htmlFor="username" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-300">
           Username
         </label>
         <Input
@@ -36,11 +36,11 @@ export default function LoginForm() {
           placeholder="Enter username"
           autoComplete="username"
           autoFocus
-          className="border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1"
+          className="border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:bg-white/5"
         />
       </div>
       <div>
-        <label htmlFor="password" className="mb-1.5 block text-sm font-semibold text-slate-700">
+        <label htmlFor="password" className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-300">
           Password
         </label>
         <Input
@@ -50,12 +50,12 @@ export default function LoginForm() {
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Enter password"
           autoComplete="current-password"
-          className="border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1"
+          className="border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:bg-white/5"
         />
       </div>
 
       {loginError && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400">
           {loginError}
         </div>
       )}

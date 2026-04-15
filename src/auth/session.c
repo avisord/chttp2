@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,8 +27,10 @@ static int generate_session_id(char out[65]) {
 
 int create_session(const char *username, char session_id_out[65]) {
   char id[65];
-  if (generate_session_id(id) < 0)
+  if (generate_session_id(id) < 0) {
+    perror("create_session: generate_session_id failed");
     return -1;
+  }
 
   time_t now = time(NULL);
   time_t expires = now + SESSION_EXPIRY_SEC;
@@ -36,8 +39,10 @@ int create_session(const char *username, char session_id_out[65]) {
   snprintf(filepath, sizeof(filepath), "%s/session_%s", SESSION_DIR, id);
 
   int fd = open(filepath, O_WRONLY | O_CREAT | O_EXCL, 0644);
-  if (fd < 0)
+  if (fd < 0) {
+    fprintf(stderr, "create_session: open(%s) failed: %s\n", filepath, strerror(errno));
     return -1;
+  }
 
   char buf[512];
   int len = snprintf(buf, sizeof(buf),
