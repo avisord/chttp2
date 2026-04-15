@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Home, ChevronRight } from 'lucide-react'
+import { Home, ChevronRight, Trash2 } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
 import { useSearchParams } from 'react-router-dom'
+
+const TRASH_PATH = 'trash:///'
 
 export default function Breadcrumbs() {
   const dispatch = useAppDispatch()
@@ -86,9 +88,24 @@ export default function Breadcrumbs() {
     return () => window.removeEventListener('keydown', handler)
   }, [startEditing])
 
+  const isTrash = currentPath === TRASH_PATH
+
   const barHighlight = isRoot
     ? 'border-red-200 bg-red-50/50'
     : 'border-slate-200 bg-slate-50/50'
+
+  if (isTrash) {
+    return (
+      <div className={`flex w-full items-center rounded-lg border px-1 ${barHighlight}`}>
+        <nav className="flex min-w-0 flex-1 items-center gap-1 text-sm">
+          <span className="flex shrink-0 items-center gap-2 rounded-md px-2 py-1 font-semibold text-slate-900">
+            <Trash2 className="h-4 w-4" />
+            Trash
+          </span>
+        </nav>
+      </div>
+    )
+  }
 
   if (editing) {
     return (

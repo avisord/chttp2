@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from 'react'
-import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download, Search, X, Minus, Plus } from 'lucide-react'
+import { Grid3x3, List, FolderPlus, Upload, ArrowUpDown, Trash2, Download, Search, X, Minus, Plus, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -21,6 +21,9 @@ interface ToolbarProps {
   onSearchChange: (value: string) => void
   onSearchKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
   searchInputRef: RefObject<HTMLInputElement | null>
+  trashMode?: boolean
+  onBulkRestore?: () => void
+  onEmptyTrash?: () => void
 }
 
 export default function Toolbar({
@@ -32,6 +35,9 @@ export default function Toolbar({
   onSearchChange,
   onSearchKeyDown,
   searchInputRef,
+  trashMode,
+  onBulkRestore,
+  onEmptyTrash,
 }: ToolbarProps) {
   const dispatch = useAppDispatch()
   const { sortBy, sortOrder, selectedPaths } = useAppSelector((s) => s.fileSystem)
@@ -65,7 +71,28 @@ export default function Toolbar({
           )}
         </div>
 
-        {hasSelection ? (
+        {trashMode ? (
+          <>
+            {hasSelection && (
+              <>
+                <span className="mr-1 text-sm font-medium text-slate-500">
+                  {selectedPaths.length} selected
+                </span>
+                <Button variant="ghost" size="sm" onClick={onBulkRestore} className="text-slate-600 hover:bg-slate-100">
+                  <RotateCcw className="mr-1 h-4 w-4" /> Restore
+                </Button>
+                <Button variant="ghost" size="sm" onClick={onBulkDelete} className="text-red-500 hover:bg-red-50 hover:text-red-600">
+                  <Trash2 className="mr-1 h-4 w-4" /> Delete Permanently
+                </Button>
+              </>
+            )}
+            {!hasSelection && (
+              <Button variant="ghost" size="sm" onClick={onEmptyTrash} className="text-red-500 hover:bg-red-50 hover:text-red-600">
+                <Trash2 className="mr-1 h-4 w-4" /> Empty Trash
+              </Button>
+            )}
+          </>
+        ) : hasSelection ? (
           <>
             <span className="mr-1 text-sm font-medium text-slate-500">
               {selectedPaths.length} selected

@@ -14,16 +14,23 @@ interface DeleteConfirmDialogProps {
   onOpenChange: (open: boolean) => void
   names: string[]
   onConfirm: () => void
+  permanent?: boolean
 }
 
-export default function DeleteConfirmDialog({ open, onOpenChange, names, onConfirm }: DeleteConfirmDialogProps) {
+export default function DeleteConfirmDialog({ open, onOpenChange, names, onConfirm, permanent }: DeleteConfirmDialogProps) {
+  const itemLabel = names.length > 1 ? `${names.length} items` : `"${names[0]}"`
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {names.length > 1 ? `${names.length} items` : `"${names[0]}"`}?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {permanent ? `Permanently delete ${itemLabel}?` : `Move ${itemLabel} to Trash?`}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            This action cannot be undone.
+            {permanent
+              ? 'This action cannot be undone.'
+              : 'You can restore it later from Trash.'}
             {names.length > 1 && (
               <span className="mt-2 block text-xs text-muted-foreground">
                 {names.slice(0, 5).join(', ')}
@@ -38,7 +45,7 @@ export default function DeleteConfirmDialog({ open, onOpenChange, names, onConfi
             onClick={onConfirm}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            Delete
+            {permanent ? 'Delete Permanently' : 'Move to Trash'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -5,12 +5,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { FolderOpen, Download, Pencil, Copy, Trash2, Info, FolderPlus, Upload, RefreshCw, Bookmark } from 'lucide-react'
+import { FolderOpen, Download, Pencil, Copy, Trash2, Info, FolderPlus, Upload, RefreshCw, Bookmark, RotateCcw } from 'lucide-react'
 import type { FileEntry } from '@/types/api'
 
 interface FileContextMenuProps {
   children: React.ReactNode
   entry?: FileEntry
+  trashMode?: boolean
   onOpen?: () => void
   onDownload?: () => void
   onRename?: () => void
@@ -21,11 +22,13 @@ interface FileContextMenuProps {
   onUpload?: () => void
   onRefresh?: () => void
   onBookmark?: () => void
+  onRestore?: () => void
 }
 
 export default function FileContextMenu({
   children,
   entry,
+  trashMode,
   onOpen,
   onDownload,
   onRename,
@@ -36,12 +39,29 @@ export default function FileContextMenu({
   onUpload,
   onRefresh,
   onBookmark,
+  onRestore,
 }: FileContextMenuProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        {entry ? (
+        {trashMode ? (
+          entry ? (
+            <>
+              <ContextMenuItem onClick={onRestore}>
+                <RotateCcw className="mr-2 h-4 w-4" /> Restore
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onDelete} className="text-destructive">
+                <Trash2 className="mr-2 h-4 w-4" /> Delete Permanently
+              </ContextMenuItem>
+            </>
+          ) : (
+            <ContextMenuItem onClick={onRefresh}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+            </ContextMenuItem>
+          )
+        ) : entry ? (
           <>
             <ContextMenuItem onClick={onOpen}>
               <FolderOpen className="mr-2 h-4 w-4" /> Open

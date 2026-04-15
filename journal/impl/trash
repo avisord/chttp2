@@ -1,0 +1,173 @@
+# Trash Implementation Plan
+
+## Context
+
+The file manager currently does hard deletes (`unlink`/`rmdir`). We need a GNOME-style trash system where deleted files are moved to `~/.imaginary/trash/` instead, with restore and permanent delete capabilities. The trash appears as a pseudo-directory in the Places sidebar — it's not a real filesystem path but a virtual view backed by the trash API.
+
+## Architecture
+
+### Storage Layout (per user, relative to home)
+```
+~/.imaginary/trash/
+  files/          # actual trashed files/dirs (flat, original name preserved)
+  info/           # metadata sidecar files
+    <name>.info   # plain text: path + deleted_at
+```
+
+**Info file format** (simple key=value, like GNOME `.trashinfo`):
+```
+path=/original/relative/path/to/file
+deleted_at=2026-04-16T12:34:56Z
+```
+
+**Name collision handling**: If a file with the same name already exists in trash, append `.1`, `.2`, etc. The `.info` file uses the same suffixed name.
+
+---
+
+## Backend (C)
+
+### New endpoints — all `DEFINE_AUTH_ROUTE` (run as user)
+
+| Method | Path | Handler | Description |
+|--------|------|---------|-------------|
+| `GET` | `/trash/list` | `handle_trash_list_impl` | List trashed items (name, original path, deleted_at, type, size) |
+| `POST` | `/trash/restore` | `handle_trash_restore_impl` | Restore item (body: `{"name":"..."}`) — moves back to original path |
+| `DELETE` | `/trash/:name` | `handle_trash_delete_impl` | Permanently delete one trashed item |
+| `DELETE` | `/trash` | `handle_trash_empty_impl` | Empty entire trash |
+
+Note: No separate "trash an item" endpoint needed — the existing `DELETE /fs/file` and `DELETE /fs/dir` are modified to move to trash instead of hard-deleting. They call `trash_item(path)` from `trash.c` internally.
+
+### Files to modify/create
+
+**`src/fs/trash.c`** (new) — all 5 handler implementations:
+- `handle_trash_list_impl`: scan `~/.imaginary/trash/files/`, read each `.info` sidecar, return JSON array
+- `trash_item(const char *path)` (internal helper, called from `fs.c` delete handlers):
+  1. Validate path with `safe_path()`
+  2. Ensure `~/.imaginary/trash/{files,info}` dirs exist (`mkdir -p` style)
+  3. Handle name collisions (append `.1`, `.2`, etc.)
+  4. `rename()` file/dir into `trash/files/<name>`
+  5. Write `trash/info/<name>.info` with original path + ISO timestamp
+  6. Returns 0 on success, -1 on error (sets errno)
+- `handle_trash_restore_impl`:
+  1. Read `.info` to get original path
+  2. Ensure parent directory of original path exists
+  3. `rename()` from `trash/files/<name>` back to original path
+  4. `unlink()` the `.info` file
+- `handle_trash_delete_impl`: `unlink()` file + `.info` from trash. For dirs: recursive delete using `nftw()` with `FTW_DEPTH` flag (files first, then dirs)
+- `handle_trash_empty_impl`: iterate and remove all entries in `trash/files/` (recursive for dirs) and `trash/info/`
+
+**`src/fs/trash.h`** (new) — handler declarations
+
+**`src/fs/fs.c`** — Modify `handle_fs_delete_file_impl` and `handle_fs_rmdir_impl` to move to trash instead of hard-deleting. Both call `trash_item(path)` from `trash.c`. Directories are trashed as a whole unit (the entire tree moves into `trash/files/` as one entry). `rename()` handles this atomically since it's the same filesystem.
+
+**`src/main.c`** — Register the 4 new trash routes with `DEFINE_AUTH_ROUTE` + `CHTTP_*` macros (list, restore, delete one, empty)
+
+**`Makefile`** — `src/fs/trash.c` will be picked up automatically by the existing `SOURCES := $(shell find src/ lib/ vendor/ -name '*.c')` pattern (verify this).
+
+### Key implementation details
+- All trash operations run as the authenticated user (via `fork_and_run`), so file permissions are naturally enforced
+- Paths in `.info` files are relative to user's home (same as all other fs operations)
+- `rename()` works for both files and directories (same filesystem guaranteed since trash is in home dir)
+- For recursive directory deletion in permanent delete: implement a simple `nftw()` or manual recursive `opendir`/`unlink`/`rmdir`
+
+---
+
+## Frontend (React/TypeScript)
+
+### Pseudo-path convention
+
+Use a special sentinel path: `trash:///` — this is not a real filesystem path, so it won't collide with any real directory. The FileBrowser detects this path and switches to "trash mode."
+
+### Files to modify
+
+**`src/api/trash.ts`** (new) — API client functions:
+```ts
+listTrash()           → GET /trash/list
+restoreItem(name)     → POST /trash/restore
+deleteTrashItem(name) → DELETE /trash/<name>
+emptyTrash()          → DELETE /trash
+```
+
+**`src/store/slices/trashSlice.ts`** (new) — Redux slice:
+- State: `items: TrashEntry[]`, `status`
+- Thunks: `listTrashThunk`, `restoreItemThunk`, `deleteTrashItemThunk`, `emptyTrashThunk`
+- `TrashEntry` type: `{ name, original_path, deleted_at, type, size }`
+
+**`src/store/index.ts`** — Register `trash` reducer
+
+**`src/store/slices/fileSystemSlice.ts`** — `deleteFileThunk` and `deleteDirThunk` remain unchanged (they still call `DELETE /fs/file` and `DELETE /fs/dir`), but those backend endpoints now trash instead of hard-delete. No frontend changes needed here.
+
+**`src/components/files/PlacesPanel.tsx`**:
+- Add a hardcoded "Trash" entry in the default places section (after Home and Root)
+- On click, navigate to `trash:///` pseudo-path
+- Active state detection: check if current path is `trash:///`
+
+**`src/components/files/Breadcrumbs.tsx`**:
+- When `currentPath === 'trash:///'`: show "Trash" label with Trash2 icon, no editable path, no breadcrumb segments
+- Clicking the bar in trash mode should NOT enter edit mode (no path to edit)
+
+**`src/components/files/FileBrowser.tsx`** — Main changes:
+- Detect `currentPath === 'trash:///'` as trash mode
+- In trash mode:
+  - Load items via `listTrashThunk` instead of `listDirThunk`
+  - Map `TrashEntry[]` to `FileEntry[]` for rendering compatibility
+  - Show different context menu (Restore, Delete Permanently — no Rename, Copy, etc.)
+  - Show "Empty Trash" button in toolbar
+  - Disable drag-and-drop upload
+  - Disable New Folder button
+  - Disable paste
+- Double-click in trash mode: no-op (don't navigate into trashed dirs)
+
+**`src/components/files/FileContextMenu.tsx`**:
+- Accept a `trashMode` prop
+- In trash mode, show only: Restore, Delete Permanently (destructive), Properties
+
+**`src/components/files/Toolbar.tsx`**:
+- Accept a `trashMode` prop
+- In trash mode: hide New Folder/Upload, show "Empty Trash" button, show "Restore" for selected items
+
+**`src/components/files/DeleteConfirmDialog.tsx`**:
+- Update the dialog text: when in trash mode, say "permanently delete" instead of "move to trash"
+- When not in trash mode, update text to say "Move to Trash" instead of "Delete" (since it's now a soft delete)
+
+---
+
+## Verification
+
+1. **Build**: `make clean && make` — ensure no warnings
+2. **Manual test flow**:
+   - Login, navigate to a folder with files
+   - Delete a file → verify it disappears from listing, appears in Trash
+   - Click "Trash" in sidebar → see the deleted file
+   - Right-click → Restore → file returns to original location
+   - Delete another file, go to Trash, right-click → Delete Permanently → gone
+   - Delete multiple files, use "Empty Trash" → all gone
+3. **Edge cases**:
+   - Delete two files with the same name from different dirs → both appear in trash with collision suffix
+   - Restore when original parent dir was deleted → create parent dir first (or error gracefully)
+   - Address bar in trash mode → no editable path shown
+4. **Build with TLS**: `make clean && make TLS=1` — ensure no regressions
+
+### Critical files
+- `src/fs/trash.c` (new)
+- `src/fs/trash.h` (new)
+- `src/main.c` (route registration)
+- `src/fs/fs.c` (modify delete handlers to trash instead)
+- `frontend/src/api/trash.ts` (new)
+- `frontend/src/store/slices/trashSlice.ts` (new)
+- `frontend/src/store/index.ts`
+- `frontend/src/store/slices/fileSystemSlice.ts`
+- `frontend/src/components/files/PlacesPanel.tsx`
+- `frontend/src/components/files/Breadcrumbs.tsx`
+- `frontend/src/components/files/FileBrowser.tsx`
+- `frontend/src/components/files/FileContextMenu.tsx`
+- `frontend/src/components/files/Toolbar.tsx`
+- `frontend/src/components/files/DeleteConfirmDialog.tsx`
+
+### Existing utilities to reuse
+- `safe_path()` / `safe_filename()` from `src/utils/utils.c` — path validation
+- `fs_error()` from `src/utils/utils.c` — errno-to-HTTP mapping
+- `cJSON` from `vendor/` — JSON building/parsing
+- `DEFINE_AUTH_ROUTE` macro from `src/auth/auth.h` — route wrapping
+- `apiRequest()` from `frontend/src/api/client.ts` — HTTP client
+- `bookmarkIcon()` pattern from `PlacesPanel.tsx` — already has Trash2 icon mapping

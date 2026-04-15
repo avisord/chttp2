@@ -17,12 +17,20 @@ import {
   copyFileThunk,
   moveFileThunk,
 } from '@/store/slices/fileSystemSlice'
+import {
+  listTrashThunk,
+  restoreItemThunk,
+  deleteTrashItemThunk,
+  emptyTrashThunk,
+} from '@/store/slices/trashSlice'
 import { addUpload, updateProgress, setUploadStatus } from '@/store/slices/uploadsSlice'
 import { simpleUpload, downloadFile } from '@/api/filesystem'
 import { addBookmarkThunk } from '@/store/slices/bookmarksSlice'
 import { getFileViewType, getDownloadUrl } from '@/lib/fileTypes'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { FileEntry } from '@/types/api'
+
+const TRASH_PATH = 'trash:///'
 
 import Breadcrumbs from './Breadcrumbs'
 import Toolbar from './Toolbar'
@@ -48,6 +56,8 @@ export default function FileBrowser() {
     clipboard,
   } = useAppSelector((s) => s.fileSystem)
   const { viewMode, iconSize } = useAppSelector((s) => s.settings.values)
+  const trashItems = useAppSelector((s) => s.trash.items)
+  const isTrash = currentPath === TRASH_PATH
 
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -72,12 +82,28 @@ export default function FileBrowser() {
   useEffect(() => {
     const path = searchParams.get('path') || '.'
     dispatch(setCurrentPath(path))
-    dispatch(listDirThunk(path))
+    if (path === TRASH_PATH) {
+      dispatch(listTrashThunk())
+    } else {
+      dispatch(listDirThunk(path))
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Map trash items to FileEntry format when in trash mode
+  const effectiveEntries = useMemo(() => {
+    if (!isTrash) return entries
+    return trashItems.map((item) => ({
+      name: item.name,
+      type: item.type,
+      size: item.size,
+      modified: item.deleted_at,
+      mime: '',
+    }))
+  }, [isTrash, entries, trashItems])
 
   // Sort entries
   const sortedEntries = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => {
+    const sorted = [...effectiveEntries].sort((a, b) => {
       if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
       let cmp = 0
       if (sortBy === 'name') cmp = a.name.localeCompare(b.name)
@@ -86,7 +112,7 @@ export default function FileBrowser() {
       return sortOrder === 'asc' ? cmp : -cmp
     })
     return sorted
-  }, [entries, sortBy, sortOrder])
+  }, [effectiveEntries, sortBy, sortOrder])
 
   const resolvePath = useCallback(
     (name: string) => (currentPath === '.' ? name : `${currentPath}/${name}`),
@@ -209,13 +235,14 @@ export default function FileBrowser() {
 
   const handleItemDoubleClick = useCallback(
     (entry: FileEntry) => {
+      if (isTrash) return
       if (entry.type === 'dir') {
         navigateTo(resolvePath(entry.name))
       } else {
         openFile(entry)
       }
     },
-    [navigateTo, openFile, resolvePath],
+    [isTrash, navigateTo, openFile, resolvePath],
   )
 
   const handleUploadFiles = useCallback(
@@ -259,6 +286,46 @@ export default function FileBrowser() {
     },
     [dispatch, entries, resolvePath],
   )
+
+  const handleTrashDelete = useCallback(
+    async (names: string[]) => {
+      for (const name of names) {
+        try {
+          await dispatch(deleteTrashItemThunk(name)).unwrap()
+        } catch (err: unknown) {
+          toast.error(`Failed to delete ${name}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+        }
+      }
+      dispatch(clearSelection())
+      toast.success(`Permanently deleted ${names.length} item${names.length > 1 ? 's' : ''}`)
+    },
+    [dispatch],
+  )
+
+  const handleRestore = useCallback(
+    async (names: string[]) => {
+      for (const name of names) {
+        try {
+          await dispatch(restoreItemThunk(name)).unwrap()
+        } catch (err: unknown) {
+          toast.error(`Failed to restore ${name}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+        }
+      }
+      dispatch(clearSelection())
+      toast.success(`Restored ${names.length} item${names.length > 1 ? 's' : ''}`)
+    },
+    [dispatch],
+  )
+
+  const handleEmptyTrash = useCallback(async () => {
+    try {
+      await dispatch(emptyTrashThunk()).unwrap()
+      dispatch(clearSelection())
+      toast.success('Trash emptied')
+    } catch (err: unknown) {
+      toast.error(`Failed to empty trash: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }, [dispatch])
 
   const handlePaste = useCallback(async () => {
     if (!clipboard) return
@@ -544,6 +611,7 @@ export default function FileBrowser() {
 
   // Drag and drop
   const handleDragOver = (e: React.DragEvent) => {
+    if (isTrash) return
     e.preventDefault()
     setDragging(true)
   }
@@ -598,6 +666,9 @@ export default function FileBrowser() {
           onSearchChange={updateSearchQuery}
           onSearchKeyDown={handleSearchKeyDown}
           searchInputRef={searchInputRef}
+          trashMode={isTrash}
+          onBulkRestore={() => handleRestore(selectedPaths)}
+          onEmptyTrash={handleEmptyTrash}
         />
       </div>
 
@@ -623,15 +694,16 @@ export default function FileBrowser() {
                 <FolderOpen className="h-8 w-8 text-slate-300" />
               </div>
               <p className="text-sm font-semibold text-slate-500">
-                {searchQuery ? 'No matches found' : 'This folder is empty'}
+                {searchQuery ? 'No matches found' : isTrash ? 'Trash is empty' : 'This folder is empty'}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                {searchQuery ? `No files or folders match "${searchQuery}"` : 'Drop files here or click Upload to get started'}
+                {searchQuery ? `No files or folders match "${searchQuery}"` : isTrash ? 'Deleted files will appear here' : 'Drop files here or click Upload to get started'}
               </p>
             </div>
           ) : (
             <FileContextMenu
               entry={contextEntry ?? undefined}
+              trashMode={isTrash}
               onOpen={() => {
                 if (!contextEntry) return
                 handleItemDoubleClick(contextEntry)
@@ -655,6 +727,10 @@ export default function FileBrowser() {
                 setDeleteTargets([contextEntry.name])
                 setDeleteOpen(true)
               }}
+              onRestore={() => {
+                if (!contextEntry) return
+                handleRestore([contextEntry.name])
+              }}
               onInfo={() => {
                 if (!contextEntry) return
                 openProperties(contextEntry)
@@ -667,7 +743,7 @@ export default function FileBrowser() {
               }}
               onNewFolder={() => setNewFolderOpen(true)}
               onUpload={() => fileInputRef.current?.click()}
-              onRefresh={() => dispatch(listDirThunk(currentPath))}
+              onRefresh={() => isTrash ? dispatch(listTrashThunk()) : dispatch(listDirThunk(currentPath))}
             >
               <div>
                 {viewMode === 'grid' ? (
@@ -740,8 +816,13 @@ export default function FileBrowser() {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         names={deleteTargets}
+        permanent={isTrash}
         onConfirm={() => {
-          handleDelete(deleteTargets)
+          if (isTrash) {
+            handleTrashDelete(deleteTargets)
+          } else {
+            handleDelete(deleteTargets)
+          }
           setDeleteOpen(false)
         }}
       />

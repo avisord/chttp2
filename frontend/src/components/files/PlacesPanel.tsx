@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { fetchBookmarksThunk, removeBookmarkThunk, type Bookmark } from '@/store/slices/bookmarksSlice'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
+import { listTrashThunk } from '@/store/slices/trashSlice'
 import { cn } from '@/lib/utils'
+
+const TRASH_PATH = 'trash:///'
 
 function bookmarkIcon(bookmark: Bookmark) {
   const p = bookmark.path
@@ -30,8 +33,13 @@ export default function PlacesPanel() {
 
   const navigateTo = (path: string) => {
     dispatch(setCurrentPath(path))
-    dispatch(listDirThunk(path))
-    setSearchParams(path === '.' ? {} : { path })
+    if (path === TRASH_PATH) {
+      dispatch(listTrashThunk())
+      setSearchParams({ path: TRASH_PATH })
+    } else {
+      dispatch(listDirThunk(path))
+      setSearchParams(path === '.' ? {} : { path })
+    }
   }
 
   const handleRemove = async (e: React.MouseEvent, path: string) => {
@@ -45,7 +53,7 @@ export default function PlacesPanel() {
   }
 
   // Active when on Files page (/) and path search param matches
-  const isActive = (bookmark: Bookmark) => {
+  const isActive = (bookmark: { path: string }) => {
     if (location.pathname !== '/') return false
     const urlPath = searchParams.get('path') || '.'
     return bookmark.path === urlPath
@@ -77,6 +85,20 @@ export default function PlacesPanel() {
           </button>
         )
       })}
+
+      {/* Trash — hardcoded pseudo-directory */}
+      <button
+        onClick={() => navigateTo(TRASH_PATH)}
+        className={cn(
+          'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150',
+          isActive({ path: TRASH_PATH })
+            ? 'bg-indigo-50 text-indigo-600'
+            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+        )}
+      >
+        <Trash2 className="h-[16px] w-[16px] shrink-0" />
+        <span className="truncate">Trash</span>
+      </button>
 
       {userBookmarks.length > 0 && (
         <>

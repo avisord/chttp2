@@ -113,10 +113,21 @@ current issues:
 
 - build and deploy frontend directly using chttp static server
 
-- previews 
-- large uploads
-- address bar not visbile and clickable issue -- done
-- trash implementation
+- trash implementation --- 1
+  - implement as same as genome like trash
+  - store trash files in ~/.imaginary/trash
+    - actual files will be stored in: ~/.imaginary/trash/files/<file>
+    - other metadata will be stored in: ~/.imaginary/trash/info/<file_name>.info
+        - we only need to store these fields in the info file:
+          - path (path of the file before deletion)
+          - daleted_at (time of deletion)
+  - we need a saperate apis for trash management but in same ui (file explorer ui)
+  - keep the trash in *places list* and on clicking it user will be navigated to the trash directory which is actualla a psudo dir and no actual directory exists like this, in this special path, user only sees selected options (restored, delete) 
+  - on clicking on addresss bar, user should not get any path info (like in gnome file manager)
+
+- large uploads --- 2
+- address bar not visbile and clickable issue -- done (minor issue: getting an extra slash at start in root dir places)
+- previews - already providing media viewer
 
 - fix branding move project to main project
 - setup deployment and install script
@@ -151,4 +162,8 @@ settings which needs to be synced:
 - config dir is in: <user home>/.imaginary/config
 - respect other configs in same file
 
+---
 
+hot and cold storage backup system
+
+---
