@@ -1,5 +1,15 @@
 export const API_URL = import.meta.env.VITE_API_URL || ''
 
+/**
+ * Suppress the global 401 → login redirect temporarily.
+ * Used during session switching where a brief 401 race is expected.
+ */
+let suppress401 = false
+export function suppress401Redirect(ms = 2000) {
+  suppress401 = true
+  setTimeout(() => { suppress401 = false }, ms)
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -24,7 +34,7 @@ export async function apiRequest<T>(
   })
 
   if (res.status === 401) {
-    window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+    if (!suppress401) window.dispatchEvent(new CustomEvent('auth:unauthorized'))
     throw new ApiError('Unauthorized', 401)
   }
 
@@ -46,7 +56,7 @@ export async function apiRequestRaw(
   })
 
   if (res.status === 401) {
-    window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+    if (!suppress401) window.dispatchEvent(new CustomEvent('auth:unauthorized'))
     throw new ApiError('Unauthorized', 401)
   }
 

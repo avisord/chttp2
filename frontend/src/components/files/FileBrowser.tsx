@@ -23,8 +23,8 @@ import {
   deleteTrashItemThunk,
   emptyTrashThunk,
 } from '@/store/slices/trashSlice'
-import { addUpload, updateProgress, setUploadStatus } from '@/store/slices/uploadsSlice'
-import { simpleUpload, downloadFile } from '@/api/filesystem'
+import { downloadFile } from '@/api/filesystem'
+import { uploadEngine } from '@/lib/uploadEngine'
 import { addBookmarkThunk } from '@/store/slices/bookmarksSlice'
 import { getFileViewType, getDownloadUrl } from '@/lib/fileTypes'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -245,27 +245,23 @@ export default function FileBrowser() {
     [isTrash, navigateTo, openFile, resolvePath],
   )
 
+  /* Refetch directory when any upload completes */
+  useEffect(() => {
+    const unsub = uploadEngine.onComplete((item) => {
+      // Refetch the directory that the file was uploaded to
+      if (item.dest === currentPath || currentPath === '.') {
+        dispatch(listDirThunk(currentPath))
+      }
+      toast.success(`Uploaded "${item.filename}"`)
+    })
+    return unsub
+  }, [dispatch, currentPath])
+
   const handleUploadFiles = useCallback(
     (files: FileList) => {
-      Array.from(files).forEach((file) => {
-        const id = crypto.randomUUID()
-        dispatch(addUpload({ id, filename: file.name, totalSize: file.size, uploadedSize: 0, status: 'pending' }))
-        dispatch(setUploadStatus({ id, status: 'uploading' }))
-        simpleUpload(currentPath, file, (pct) => {
-          dispatch(updateProgress({ id, uploadedSize: (pct / 100) * file.size }))
-        })
-          .then(() => {
-            dispatch(setUploadStatus({ id, status: 'completed' }))
-            dispatch(listDirThunk(currentPath))
-            toast.success(`Uploaded "${file.name}"`)
-          })
-          .catch((err) => {
-            dispatch(setUploadStatus({ id, status: 'error', error: err.message }))
-            toast.error(`Upload failed: ${file.name}`)
-          })
-      })
+      uploadEngine.addFiles(Array.from(files), currentPath)
     },
-    [dispatch, currentPath],
+    [currentPath],
   )
 
   const handleDelete = useCallback(

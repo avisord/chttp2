@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Home, ChevronRight, Trash2 } from 'lucide-react'
+import { Home, ChevronRight, Trash2, HardDrive } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
 import { useSearchParams } from 'react-router-dom'
@@ -17,7 +17,9 @@ export default function Breadcrumbs() {
   const inputRef = useRef<HTMLInputElement>(null)
   const isRoot = user?.uid === 0
 
-  const segments = currentPath === '.' ? [] : currentPath.split('/').filter(Boolean)
+  const isAtHome = currentPath === '.'
+  const isAtRoot = currentPath === '/'
+  const segments = (isAtHome || isAtRoot) ? [] : currentPath.split('/').filter(Boolean)
 
   const toAbsolute = useCallback(
     (relPath: string) => {
@@ -140,11 +142,14 @@ export default function Breadcrumbs() {
         <button
           onClick={(e) => {
             e.stopPropagation()
-            navigateTo('.')
+            navigateTo(isAtRoot ? '/' : '.')
           }}
-          className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-slate-100 hover:text-slate-700 ${segments.length === 0 ? 'font-semibold text-slate-900' : 'text-slate-400'}`}
         >
-          <Home className="h-4 w-4" />
+          {isAtRoot || currentPath.startsWith('/')
+            ? <HardDrive className="h-4 w-4" />
+            : <Home className="h-4 w-4" />}
+          {segments.length === 0 && <span>{isAtRoot ? 'Root' : 'Home'}</span>}
         </button>
         {segments.map((seg, i) => {
           const path = segments.slice(0, i + 1).join('/')

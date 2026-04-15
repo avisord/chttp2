@@ -9,6 +9,7 @@ import { fetchSessionsThunk, switchSessionThunk } from '@/store/slices/sessionsS
 import { fetchBookmarksThunk } from '@/store/slices/bookmarksSlice'
 import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
 import { fetchSettingsThunk } from '@/store/slices/settingsSlice'
+import { suppress401Redirect } from '@/api/client'
 import PlacesPanel from '@/components/files/PlacesPanel'
 
 const adminItems = [
@@ -50,12 +51,15 @@ export default function Sidebar() {
 
   const handleSwitch = async (sessionId: string) => {
     try {
+      // Suppress 401 → login redirects briefly — the cookie swap can race
+      suppress401Redirect()
       await dispatch(switchSessionThunk(sessionId)).unwrap()
+      dispatch(setCurrentPath('.'))
+      navigate('/')
+      // Sequential: wait for dir listing before firing settings/bookmarks
+      await dispatch(listDirThunk('.')).unwrap()
       dispatch(fetchBookmarksThunk())
       dispatch(fetchSettingsThunk())
-      dispatch(setCurrentPath('.'))
-      dispatch(listDirThunk('.'))
-      navigate('/')
       toast.success('Switched session')
     } catch {
       toast.error('Failed to switch session')

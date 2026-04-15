@@ -1,64 +1,65 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit'
-
-export interface UploadItem {
-  id: string
-  filename: string
-  totalSize: number
-  uploadedSize: number
-  status: 'pending' | 'uploading' | 'completed' | 'error'
-  error?: string
-}
+import type { UploadItemState } from '@/lib/uploadEngine'
 
 interface UploadsState {
-  items: UploadItem[]
+  items: UploadItemState[]
   visible: boolean
+  collapsed: boolean
 }
 
 const initialState: UploadsState = {
   items: [],
   visible: false,
+  collapsed: false,
 }
 
 const uploadsSlice = createSlice({
   name: 'uploads',
   initialState,
   reducers: {
-    addUpload(state, action: PayloadAction<UploadItem>) {
-      state.items.unshift(action.payload)
-      state.visible = true
-    },
-    updateProgress(state, action: PayloadAction<{ id: string; uploadedSize: number }>) {
-      const item = state.items.find((i) => i.id === action.payload.id)
-      if (item) {
-        item.uploadedSize = action.payload.uploadedSize
-        item.status = 'uploading'
+    upsertItem(state, action: PayloadAction<UploadItemState>) {
+      const item = action.payload
+      // Skip the dummy clear signal
+      if (item.id === '__clear__') {
+        state.items = state.items.filter(
+          (i) => i.phase !== 'complete' && i.phase !== 'error' && i.phase !== 'aborted',
+        )
+        if (state.items.length === 0) state.visible = false
+        return
+      }
+      const idx = state.items.findIndex((i) => i.id === item.id)
+      if (idx >= 0) {
+        state.items[idx] = item
+      } else {
+        state.items.unshift(item)
+        state.visible = true
+        state.collapsed = false
+      }
+      // Remove aborted items from the list
+      if (item.phase === 'aborted') {
+        state.items = state.items.filter((i) => i.id !== item.id)
+        if (state.items.length === 0) state.visible = false
       }
     },
-    setUploadStatus(
-      state,
-      action: PayloadAction<{ id: string; status: UploadItem['status']; error?: string }>,
-    ) {
-      const item = state.items.find((i) => i.id === action.payload.id)
-      if (item) {
-        item.status = action.payload.status
-        if (action.payload.error) item.error = action.payload.error
-        if (action.payload.status === 'completed') item.uploadedSize = item.totalSize
-      }
+    clearDone(state) {
+      state.items = state.items.filter(
+        (i) => i.phase !== 'complete' && i.phase !== 'error' && i.phase !== 'aborted',
+      )
+      if (state.items.length === 0) state.visible = false
     },
-    removeUpload(state, action: PayloadAction<string>) {
+    removeItem(state, action: PayloadAction<string>) {
       state.items = state.items.filter((i) => i.id !== action.payload)
       if (state.items.length === 0) state.visible = false
     },
-    clearCompleted(state) {
-      state.items = state.items.filter((i) => i.status !== 'completed')
-      if (state.items.length === 0) state.visible = false
+    toggleCollapsed(state) {
+      state.collapsed = !state.collapsed
     },
-    toggleVisible(state) {
-      state.visible = !state.visible
+    setVisible(state, action: PayloadAction<boolean>) {
+      state.visible = action.payload
     },
   },
 })
 
-export const { addUpload, updateProgress, setUploadStatus, removeUpload, clearCompleted, toggleVisible } =
+export const { upsertItem, clearDone, removeItem, toggleCollapsed, setVisible } =
   uploadsSlice.actions
 export default uploadsSlice.reducer

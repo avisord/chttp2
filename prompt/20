@@ -125,7 +125,19 @@ current issues:
   - keep the trash in *places list* and on clicking it user will be navigated to the trash directory which is actualla a psudo dir and no actual directory exists like this, in this special path, user only sees selected options (restored, delete) 
   - on clicking on addresss bar, user should not get any path info (like in gnome file manager)
 
+- implement dark mode option (user should be able to switch between light and dark mode)
+
 - large uploads --- 2
+  - all uploads are resumable uplods
+  - for context: read poc/multi-upload.html and implement it in our frontend
+  - use all the features of that poc in this
+  - use path from current open directory as dest path
+  - for frontend:
+     - keep the design similar to google drive
+     - keep the upload widget in right bottom
+     - it should be collabsible 
+     - on sucessful upload, refetch the current directory
+
 - address bar not visbile and clickable issue -- done (minor issue: getting an extra slash at start in root dir places)
 - previews - already providing media viewer
 
@@ -163,6 +175,9 @@ settings which needs to be synced:
 - respect other configs in same file
 
 ---
+
+- feature: backup and restore in s3 bucket
+  - 
 
 hot and cold storage backup system
 
