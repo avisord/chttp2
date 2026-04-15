@@ -176,9 +176,16 @@ settings which needs to be synced:
 
 ---
 
-- feature: backup and restore in s3 bucket
-  - 
+- feature: backup and restore in s3 bucket (basically sync only exgres sync no ingress)
+  - user can have a backup and restore feature in thier dashbaord
+  - on clicking to backup and restore a dashboard will open asking aws credentials
+  - aws credentials will be stored in ~/.imaginary/config/aws.json
+  - then the user has option to select a folder to backup
 
 hot and cold storage backup system
 
 ---
+
+future scopes:
+notify user when a dangling upload file is there and ask user to keep uploading or delete it
+dangling file is usually at: 
