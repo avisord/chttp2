@@ -576,10 +576,18 @@ static int validate_upload_id(const char *id) {
   return id[16] == '\0' ? 0 : -1;
 }
 
-/* Build .tmp-upload-<id>.<ext> path in cwd. */
+#define UPLOAD_TMP_DIR ".imaginary/uploads"
+
+/* Ensure ~/.imaginary/uploads/ exists (called once per session create). */
+static int ensure_upload_tmp_dir(void) {
+  mkdir(".imaginary", 0700);
+  return mkdir(UPLOAD_TMP_DIR, 0700) == 0 || errno == EEXIST ? 0 : -1;
+}
+
+/* Build .imaginary/uploads/<id>.<ext> path. */
 static void upload_tmp_path(const char *id, const char *ext,
                              char *out, size_t n) {
-  snprintf(out, n, ".tmp-upload-%s.%s", id, ext);
+  snprintf(out, n, UPLOAD_TMP_DIR "/%s.%s", id, ext);
 }
 
 /* Bitset helpers */
@@ -736,9 +744,16 @@ void handle_fs_upload_session_create_impl(HttpRequest *req, HttpResponse *res) {
     }
   }
 
+  /* Ensure temp dir exists */
+  if (ensure_upload_tmp_dir() != 0) {
+    cJSON_Delete(json);
+    fs_error(res, errno);
+    return;
+  }
+
   /* Generate upload_id: 8 random bytes → 16 hex chars */
   char upload_id[17];
-  char meta_path[64], state_path[64], data_path[64];
+  char meta_path[128], state_path[128], data_path[128];
   int attempts = 0;
   int meta_fd = -1;
 
@@ -827,7 +842,7 @@ void handle_fs_upload_session_status_impl(HttpRequest *req, HttpResponse *res) {
     return;
   }
 
-  char meta_path[64], state_path[64];
+  char meta_path[128], state_path[128];
   upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
   upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
 
@@ -908,7 +923,7 @@ void handle_fs_upload_chunk_impl(HttpRequest *req, HttpResponse *res) {
   size_t chunk_index = (size_t)strtoul(idx_str, NULL, 10);
   size_t chunk_bytes = (size_t)strtoull(cl_str, NULL, 10);
 
-  char meta_path[64], state_path[64], data_path[64];
+  char meta_path[128], state_path[128], data_path[128];
   upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
   upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
   upload_tmp_path(upload_id, "data",  data_path,  sizeof(data_path));
@@ -1106,7 +1121,7 @@ void handle_fs_upload_session_abort_impl(HttpRequest *req, HttpResponse *res) {
     return;
   }
 
-  char meta_path[64], state_path[64], data_path[64];
+  char meta_path[128], state_path[128], data_path[128];
   upload_tmp_path(upload_id, "meta",  meta_path,  sizeof(meta_path));
   upload_tmp_path(upload_id, "state", state_path, sizeof(state_path));
   upload_tmp_path(upload_id, "data",  data_path,  sizeof(data_path));
