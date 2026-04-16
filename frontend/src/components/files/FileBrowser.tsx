@@ -142,12 +142,16 @@ export default function FileBrowser() {
 
 
   const navigateTo = useCallback(
-    (path: string) => {
-      dispatch(setCurrentPath(path))
-      dispatch(listDirThunk(path))
-      setSearchParams(path === '.' ? {} : { path })
+    async (path: string) => {
       setSearchQuery('')
       setSearchOriginPath(null)
+      try {
+        await dispatch(listDirThunk(path)).unwrap()
+        // Only update path + URL on success (fulfilled handler already set currentPath)
+        setSearchParams(path === '.' ? {} : { path })
+      } catch {
+        // Directory listing failed — don't update path or URL
+      }
     },
     [dispatch, setSearchParams],
   )

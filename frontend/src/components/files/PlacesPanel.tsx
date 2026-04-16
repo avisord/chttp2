@@ -31,14 +31,18 @@ export default function PlacesPanel() {
     dispatch(fetchBookmarksThunk())
   }, [dispatch])
 
-  const navigateTo = (path: string) => {
-    dispatch(setCurrentPath(path))
+  const navigateTo = async (path: string) => {
     if (path === TRASH_PATH) {
+      dispatch(setCurrentPath(path))
       dispatch(listTrashThunk())
       setSearchParams({ path: TRASH_PATH })
     } else {
-      dispatch(listDirThunk(path))
-      setSearchParams(path === '.' ? {} : { path })
+      try {
+        await dispatch(listDirThunk(path)).unwrap()
+        setSearchParams(path === '.' ? {} : { path })
+      } catch {
+        // Directory listing failed — don't update
+      }
     }
   }
 

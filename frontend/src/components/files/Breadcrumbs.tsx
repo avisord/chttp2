@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Home, ChevronRight, Trash2, HardDrive } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { listDirThunk, setCurrentPath } from '@/store/slices/fileSystemSlice'
+import { listDirThunk } from '@/store/slices/fileSystemSlice'
 import { useSearchParams } from 'react-router-dom'
 
 const TRASH_PATH = 'trash:///'
@@ -42,10 +42,13 @@ export default function Breadcrumbs() {
   )
 
   const navigateTo = useCallback(
-    (path: string) => {
-      dispatch(setCurrentPath(path))
-      dispatch(listDirThunk(path))
-      setSearchParams(path === '.' ? {} : { path })
+    async (path: string) => {
+      try {
+        await dispatch(listDirThunk(path)).unwrap()
+        setSearchParams(path === '.' ? {} : { path })
+      } catch {
+        // Directory listing failed — don't update
+      }
     },
     [dispatch, setSearchParams],
   )
