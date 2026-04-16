@@ -2,6 +2,6 @@
 dist
 .env
 tmp
-uploads
+./uploads
 .cache
 build
