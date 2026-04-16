@@ -148,10 +148,12 @@ class UploadEngine {
 
   /* ── Public API ───────────────────────────────────────────────────── */
 
-  /** Enqueue files for upload to `dest` (relative path). Starts queue automatically. */
-  addFiles(files: File[], dest: string) {
+  /** Enqueue files for upload to `dir` (relative path to directory). Starts queue automatically. */
+  addFiles(files: File[], dir: string) {
     for (const file of files) {
       const chunkCount = Math.ceil(file.size / CHUNK_SIZE) || 1
+      // Build dest as directory/filename (e.g. "subdir/file.zip" or just "file.zip" for home)
+      const dest = dir === '.' || dir === '' ? file.name : `${dir}/${file.name}`
       const item: InternalItem = {
         id: crypto.randomUUID(),
         file,

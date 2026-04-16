@@ -248,8 +248,10 @@ export default function FileBrowser() {
   /* Refetch directory when any upload completes */
   useEffect(() => {
     const unsub = uploadEngine.onComplete((item) => {
-      // Refetch the directory that the file was uploaded to
-      if (item.dest === currentPath || currentPath === '.') {
+      // Extract directory from dest (e.g. "subdir/file.zip" → "subdir", "file.zip" → ".")
+      const lastSlash = item.dest.lastIndexOf('/')
+      const destDir = lastSlash > 0 ? item.dest.slice(0, lastSlash) : '.'
+      if (destDir === currentPath || (destDir === '.' && currentPath === '.')) {
         dispatch(listDirThunk(currentPath))
       }
       toast.success(`Uploaded "${item.filename}"`)
